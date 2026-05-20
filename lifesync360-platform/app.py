@@ -141,16 +141,16 @@ def get_dynamo_table():
     global _dynamo
     if _dynamo is None:
         _dynamo = boto3.resource('dynamodb', region_name=AWS_REGION)
-    return _dynamo.Table(os.environ['DYNAMO_TABLE','lifesync_customer_result'])
+    return _dynamo.Table(os.environ.get('DYNAMO_TABLE', 'lifesync_customer_result'))
 
 def get_db():
     """Service-DB (lifesync360) 연결"""
     import pymysql
     return pymysql.connect(
-        host=os.environ['AURORA_HOST','auroracluster-db-writer.cghecq7cbwln.ap-northeast-2.rds.amazonaws.com'],
-        user=os.environ['DB_USER','admin'],
-        password=os.environ['DB_PASS','ChangeMe123!'],
-        database=os.environ['DB_NAME','lifesync360'],
+        host=os.environ.get('AURORA_HOST', 'auroracluster-db.cluster-cghecq7cbwln.ap-northeast-2.rds.amazonaws.com'),
+        user=os.environ['DB_USER'],
+        password=os.environ['DB_PASS'],
+        database=os.environ.get('DB_NAME', 'lifesync360'),
         cursorclass=pymysql.cursors.DictCursor,
     )
 
