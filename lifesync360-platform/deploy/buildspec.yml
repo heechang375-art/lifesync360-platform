@@ -7,7 +7,7 @@ env:
     SERVICE_NAME: lifesync-dev-21-lifesync-ecs-existing-vpc-v4-svc
     TASKDEF_FAMILY: lifesync-dev-21-lifesync-ecs-existing-vpc-v4-td
   parameter-store:
-    ECR_URI: /lifesync360/ecr-uri
+    ECR_URI: /lifesync/ecr-uri
 
 phases:
   pre_build:
