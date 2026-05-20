@@ -13,11 +13,11 @@ _PRODUCTS_DIR = Path(__file__).parent.parent / 'data' / 'products'
 MOCK_USERS = {
     'test@lifesync.com': {
         'ls_user_id':    'LS-AABBCC11-000001',
-        'global_id':     'G000297409',
+        'global_id':     'G000181086',
         'name':          '김철수',
         'email':         'test@lifesync.com',
         'password_hash': _PW_HASH,
-        'grade':         'VIP',
+        'grade':         'CARE',
         # 인구통계 (customer_360_profile)
         'gender':        'M',
         'age_band':      '40s',
@@ -31,19 +31,19 @@ MOCK_USERS = {
         'customer_type':   'INDIVIDUAL',
         'first_created_dt':'2022-03-15',
         'last_login_dt':   '2026-05-13 18:24',
-        # ML 확률 (DynamoDB)
-        'vip_prob':         0.85,
-        'signup_prob':      0.72,
-        'rec_prob':         0.91,
-        'next_best_action': '프리미엄 건강검진 예약하기',
+        # DynamoDB lifesync_customer_result 실데이터 (2026-05-20 sync)
+        'vip_prob':         0.4224,
+        'signup_prob':      0.0,
+        'rec_prob':         0.0,
+        'next_best_action': 'HEALTH_CHECKUP',
     },
     'test2@lifesync.com': {
         'ls_user_id':    'LS-DDEEFF22-000002',
-        'global_id':     'G000672689',
+        'global_id':     'G000009205',
         'name':          '이수진',
         'email':         'test2@lifesync.com',
         'password_hash': _PW_HASH,
-        'grade':         'GOLD',
+        'grade':         'CARE',
         'gender':        'F',
         'age_band':      '30s',
         'region':        'GYEONGGI',
@@ -55,18 +55,19 @@ MOCK_USERS = {
         'customer_type':   'INDIVIDUAL',
         'first_created_dt':'2023-08-02',
         'last_login_dt':   '2026-05-14 09:11',
-        'vip_prob':         0.58,
-        'signup_prob':      0.66,
-        'rec_prob':         0.79,
-        'next_best_action': 'ETF 적립식 투자 시작',
+        # DynamoDB lifesync_customer_result 실데이터 (2026-05-20 sync)
+        'vip_prob':         0.0052,
+        'signup_prob':      0.0,
+        'rec_prob':         1.0,
+        'next_best_action': 'ETF_PRODUCT',
     },
     'test3@lifesync.com': {
         'ls_user_id':    'LS-99AABB33-000003',
-        'global_id':     'G000115282',
+        'global_id':     'G000025187',
         'name':          '박지훈',
         'email':         'test3@lifesync.com',
         'password_hash': _PW_HASH,
-        'grade':         'SILVER',
+        'grade':         'CARE',
         'gender':        'M',
         'age_band':      '50s',
         'region':        'BUSAN',
@@ -78,10 +79,11 @@ MOCK_USERS = {
         'customer_type':   'INDIVIDUAL',
         'first_created_dt':'2024-01-20',
         'last_login_dt':   '2026-05-12 22:48',
-        'vip_prob':         0.32,
-        'signup_prob':      0.51,
-        'rec_prob':         0.64,
-        'next_best_action': '실손 의료보험 가입 검토',
+        # DynamoDB lifesync_customer_result 실데이터 (2026-05-20 sync)
+        'vip_prob':         0.9653,
+        'signup_prob':      0.0,
+        'rec_prob':         0.0,
+        'next_best_action': 'PB_CENTER',
     },
 }
 
@@ -89,18 +91,18 @@ MOCK_USERS = {
 # breakdown: 심혈관 max 35 / 활동 max 35 / 신체지표 max 20 / 임상 max 10
 _HEALTH_BY_USER = {
     'LS-AABBCC11-000001': {
-        # DynamoDB 점수
-        'dynamic_score': 92.4, 'health_score': 88, 'fin_score': 85, 'behavior_score': 76,
+        # DynamoDB lifesync_customer_result 실데이터 sync (G000181086, CARE)
+        'dynamic_score': 17.2, 'health_score': 48.7, 'fin_score': 85, 'behavior_score': 76,
         # customer_360_profile 점수 (운영 시 onprem)
         'risk_score':     22.5,
         'finance_score':  85.0,
         'asset_score':    78.5,
         'lifesync_score': 91.2,
         # DynamoDB ML 확률 + NBA
-        'vip_prob':         0.85,
-        'signup_prob':      0.72,
-        'rec_prob':         0.91,
-        'next_best_action': '프리미엄 건강검진 예약하기',
+        'vip_prob':         0.4224,
+        'signup_prob':      0.0,
+        'rec_prob':         0.0,
+        'next_best_action': 'HEALTH_CHECKUP',
         'breakdown': [
             {'label': '심혈관',   'score': 32, 'max': 35},
             {'label': '활동',     'score': 31, 'max': 35},
@@ -122,15 +124,16 @@ _HEALTH_BY_USER = {
         ],
     },
     'LS-DDEEFF22-000002': {
-        'dynamic_score': 74.0, 'health_score': 72, 'fin_score': 68, 'behavior_score': 81,
+        # DynamoDB lifesync_customer_result 실데이터 sync (G000009205, CARE)
+        'dynamic_score': 25.5, 'health_score': 64.7, 'fin_score': 68, 'behavior_score': 81,
         'risk_score':     35.0,
         'finance_score':  68.0,
         'asset_score':    62.5,
         'lifesync_score': 73.2,
-        'vip_prob':         0.58,
-        'signup_prob':      0.66,
-        'rec_prob':         0.79,
-        'next_best_action': 'ETF 적립식 투자 시작',
+        'vip_prob':         0.0052,
+        'signup_prob':      0.0,
+        'rec_prob':         1.0,
+        'next_best_action': 'ETF_PRODUCT',
         'breakdown': [
             {'label': '심혈관',   'score': 24, 'max': 35},
             {'label': '활동',     'score': 26, 'max': 35},
@@ -152,15 +155,16 @@ _HEALTH_BY_USER = {
         ],
     },
     'LS-99AABB33-000003': {
-        'dynamic_score': 55.2, 'health_score': 53, 'fin_score': 58, 'behavior_score': 61,
+        # DynamoDB lifesync_customer_result 실데이터 sync (G000025187, CARE)
+        'dynamic_score': 28.3, 'health_score': 78.5, 'fin_score': 58, 'behavior_score': 61,
         'risk_score':     58.0,
         'finance_score':  58.0,
         'asset_score':    48.0,
         'lifesync_score': 54.8,
-        'vip_prob':         0.32,
-        'signup_prob':      0.51,
-        'rec_prob':         0.64,
-        'next_best_action': '실손 의료보험 가입 검토',
+        'vip_prob':         0.9653,
+        'signup_prob':      0.0,
+        'rec_prob':         0.0,
+        'next_best_action': 'PB_CENTER',
         'breakdown': [
             {'label': '심혈관',   'score': 18, 'max': 35},
             {'label': '활동',     'score': 19, 'max': 35},
