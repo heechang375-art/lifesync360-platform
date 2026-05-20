@@ -11,12 +11,12 @@ import boto3
 from flask import Flask, render_template, request, redirect, url_for, jsonify
 
 app = Flask(__name__)
-JWT_SECRET          = os.environ.get('JWT_SECRET')
+JWT_SECRET          = os.environ.get('JWT_SECRET','fdd78ce2ec714307b9598e37907cb47bbd9168cf2a5d0653f097ad82d7743d98')
 if not JWT_SECRET:
     raise RuntimeError('JWT_SECRET 환경변수 누락 — IaC env 주입 확인 필요')
 USE_MOCK            = os.environ.get('USE_MOCK', 'true').lower() != 'false'
 PROFILE_SYNC_LAMBDA  = os.environ.get('PROFILE_SYNC_LAMBDA', '')
-ONPREM_QUERY_LAMBDA  = os.environ.get('ONPREM_QUERY_LAMBDA', '')
+ONPREM_QUERY_LAMBDA  = os.environ.get('ONPREM_QUERY_LAMBDA', 'lifesync-onprem-customer-query')
 AWS_REGION           = os.environ.get('AWS_REGION', 'ap-northeast-2')
 
 # mock_data는 항상 import (인증 + USE_MOCK 분기 둘 다에서 사용)
@@ -131,7 +131,7 @@ _dynamo = None
 def get_redis():
     global _redis
     if _redis is None:
-        host = os.environ.get('REDIS_HOST')
+        host = os.environ.get('REDIS_HOST','lif-re-1sqfju15n8thy')
         if not host:
             raise RuntimeError('REDIS_HOST 환경변수가 설정되지 않았습니다.')
         _redis = redis.Redis(host=host, port=int(os.environ.get('REDIS_PORT', '6379')), decode_responses=True)
@@ -141,16 +141,16 @@ def get_dynamo_table():
     global _dynamo
     if _dynamo is None:
         _dynamo = boto3.resource('dynamodb', region_name=AWS_REGION)
-    return _dynamo.Table(os.environ['DYNAMO_TABLE'])
+    return _dynamo.Table(os.environ['DYNAMO_TABLE','lifesync_customer_result'])
 
 def get_db():
     """Service-DB (lifesync360) 연결"""
     import pymysql
     return pymysql.connect(
-        host=os.environ['AURORA_HOST'],
-        user=os.environ['DB_USER'],
-        password=os.environ['DB_PASS'],
-        database=os.environ['DB_NAME'],
+        host=os.environ['AURORA_HOST','auroracluster-db-writer.cghecq7cbwln.ap-northeast-2.rds.amazonaws.com'],
+        user=os.environ['DB_USER','admin'],
+        password=os.environ['DB_PASS','ChangeMe123!'],
+        database=os.environ['DB_NAME','lifesync360'],
         cursorclass=pymysql.cursors.DictCursor,
     )
 
