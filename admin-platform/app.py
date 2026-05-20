@@ -1044,13 +1044,37 @@ def users():
             recent_recommend=MOCKUP_C360_RECENT_RECOMMEND,
             recent_activity=MOCKUP_C360_RECENT_ACTIVITY,
         )
-    # USE_MOCK=false — 안 들어오는 데이터 빈 (검색 후 user_detail 로 드릴다운)
+    # USE_MOCK=false — onprem PrivateAPI Lambda 호출 + 빈 필드 채운 dict 반환 (Jinja 안전)
+    profile = {
+        'name_masked': '-', 'age_band': '-', 'gender': '-', 'region': '-',
+        'income_tier': '-', 'asset_tier': '-', 'customer_status': '-',
+        'first_created_dt': '-', 'last_updated_dt': '-', 'vip_grade': '-',
+        'customer_type': '-', 'global_id': q, 'ls_user_id': '-',
+    }
+    consent_badges = []
+    try:
+        onprem = (_call_onprem('get_profile', global_id=q) or {})
+        cust = onprem.get('customer', onprem)
+        profile.update({
+            'global_id': onprem.get('global_id', q),
+            'customer_status': cust.get('customer_status', '-'),
+            'vip_grade':       cust.get('vip_grade', '-'),
+            'customer_type':   cust.get('customer_type', '-'),
+            'first_created_dt':cust.get('first_created_dt', '-'),
+            'last_updated_dt': cust.get('last_updated_dt', '-'),
+        })
+        for c in (onprem.get('consents') or []):
+            consent_badges.append({'key': c.get('domain', c.get('key', '')), 'agreed': c.get('agreed', False)})
+    except Exception:
+        pass
+
     return render_template('users.html',
         active='customer', q=q,
-        profile={}, status_rows=[],
-        consent_badges=[], owned_badges=[],
+        profile=profile, status_rows=[],
+        consent_badges=consent_badges, owned_badges=[],
         topn=[], crosssell=[],
-        nba={}, precision={},
+        nba={'reason': '-', 'updated_at': '-', 'next_action': '-'},
+        precision={'value': '-', 'sub': '-'},
         recent_recommend=[], recent_activity=[],
     )
 
@@ -1209,11 +1233,19 @@ def _stub_aurora_summary():
     if USE_MOCK:
         return MOCKUP_DASH_KPI
 
-    # 운영 단 KPI 9 — 외부 호출 제거 (Aurora private + On-Prem Lambda timeout 으로 SSR 24초 hang 원인)
-    # 안 들어오는 데이터는 '-' 로 비워둠 (사용자 의도). 운영 단계에서 실 호출 복원 시 함수 분리 권장.
+    # 운영 — onprem Lambda + DDB scan 호출. Lambda timeout 3s (boto3 Config)
     cards = [dict(c, value='-') for c in MOCKUP_DASH_KPI]
 
-    # DDB 최신 update_time 만 가벼운 호출 — 응답 빠름 (item 0 도 OK)
+    # 1. 통합 고객 수 / 2. 플랫폼 가입자 / 3. 분석 대상 (On-Prem PrivateAPI 경유)
+    for idx, action in [(0, 'count_master_customer'), (1, 'count_users'), (2, 'count_users_consented')]:
+        try:
+            c = (_call_onprem(action) or {}).get('count')
+            if c is not None:
+                cards[idx]['value'] = f'{int(c):,}'
+        except Exception:
+            pass
+
+    # 9. AI 추천 상태 — DDB 최신 update_time (Vertex AI 배치 시각)
     try:
         items = get_dynamo_table().scan(ProjectionExpression='update_time', Limit=1).get('Items', [])
         if items and items[0].get('update_time'):
