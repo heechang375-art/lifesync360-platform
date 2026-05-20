@@ -80,7 +80,7 @@ from mockup_data import (
 _wearable_batch_path = os.path.join(os.path.dirname(__file__), 'mock_wearable_batch.json')
 try:
     wearable_engine.load_initial(_wearable_batch_path)
-    wearable_engine.start_loop(interval=3.0)
+    wearable_engine.start_loop(interval=1.0)
 except FileNotFoundError:
     pass   # 운영 단계에선 Kinesis consumer 로 교체 예정 — 파일 없어도 admin 부팅 OK
 
@@ -111,8 +111,10 @@ def get_dynamo_table():
 def _get_lambda():
     global _lambda_client
     if _lambda_client is None:
-        import json as _j
-        _lambda_client = boto3.client('lambda', region_name=AWS_REGION)
+        from botocore.config import Config
+        # Lambda invoke 응답 안 오면 3초만 기다림 — 화면 hang 방지
+        cfg = Config(connect_timeout=2, read_timeout=3, retries={'max_attempts': 1})
+        _lambda_client = boto3.client('lambda', region_name=AWS_REGION, config=cfg)
     return _lambda_client
 
 
@@ -1028,19 +1030,28 @@ def dashboard():
 @login_required
 def users():
     q = request.args.get('q', '').strip() or MOCKUP_C360_DEFAULT_QUERY
+    if USE_MOCK:
+        return render_template('users.html',
+            active='customer', q=q,
+            profile=MOCKUP_C360_PROFILE,
+            status_rows=MOCKUP_C360_STATUS,
+            consent_badges=MOCKUP_C360_CONSENT_BADGES,
+            owned_badges=MOCKUP_C360_OWNED_BADGES,
+            topn=MOCKUP_C360_TOPN,
+            crosssell=MOCKUP_CROSSSELL_LIST,
+            nba=MOCKUP_C360_NBA,
+            precision=MOCKUP_C360_PRECISION,
+            recent_recommend=MOCKUP_C360_RECENT_RECOMMEND,
+            recent_activity=MOCKUP_C360_RECENT_ACTIVITY,
+        )
+    # USE_MOCK=false — 안 들어오는 데이터 빈 (검색 후 user_detail 로 드릴다운)
     return render_template('users.html',
-        active='customer',
-        q=q,
-        profile=MOCKUP_C360_PROFILE,
-        status_rows=MOCKUP_C360_STATUS,
-        consent_badges=MOCKUP_C360_CONSENT_BADGES,
-        owned_badges=MOCKUP_C360_OWNED_BADGES,
-        topn=MOCKUP_C360_TOPN,
-        crosssell=MOCKUP_CROSSSELL_LIST,
-        nba=MOCKUP_C360_NBA,
-        precision=MOCKUP_C360_PRECISION,
-        recent_recommend=MOCKUP_C360_RECENT_RECOMMEND,
-        recent_activity=MOCKUP_C360_RECENT_ACTIVITY,
+        active='customer', q=q,
+        profile={}, status_rows=[],
+        consent_badges=[], owned_badges=[],
+        topn=[], crosssell=[],
+        nba={}, precision={},
+        recent_recommend=[], recent_activity=[],
     )
 
 
@@ -1112,97 +1123,35 @@ def user_detail(global_id):
 @app.route('/ai')
 @login_required
 def ai():
+    """ai 페이지 SSR — USE_MOCK=false 시 실 호출 안 되는 영역은 빈 list 로.
+
+    SSR 진입 시 Aurora SQL / DDB scan 직접 호출 X (5초+ 지연 원인 — ops 와 동일 패턴).
+    실 데이터는 JS 폴링 (kpi4 + 차트 4) 가 /api/ai/* 로 fetch.
+    """
     if USE_MOCK:
-        top10        = MOCKUP_RECOMMEND_TOP10
-        by_category  = MOCKUP_RECOMMEND_BY_CATEGORY
-        by_grade     = MOCKUP_RECOMMEND_BY_GRADE
-        score_dist   = MOCKUP_SCORE_DISTRIBUTION
-    else:
-        # Aurora 기반 — 카테고리별/등급별/TOP10 (DB 없으면 빈 리스트)
-        top10 = by_category = by_grade = []
-        score_dist = {'dynamic_score': []}
-        try:
-            db = get_db()
-            try:
-                with db.cursor() as cur:
-                    cur.execute(
-                        'SELECT p.product_name AS product, cat.category_code AS category, '
-                        '       COUNT(*) AS recommended, '
-                        '       ROUND(SUM(r.clicked_flag = "Y")   / NULLIF(COUNT(*),0) * 100, 1) AS ctr, '
-                        '       ROUND(SUM(r.purchased_flag = "Y") / NULLIF(SUM(r.clicked_flag="Y"),0) * 100, 1) AS cvr '
-                        'FROM customer_recommend_history r '
-                        'JOIN product_master  p   ON r.product_id  = p.product_id '
-                        'JOIN category_master cat ON p.category_id = cat.category_id '
-                        'GROUP BY p.product_id, p.product_name, cat.category_code '
-                        'ORDER BY recommended DESC LIMIT 10'
-                    )
-                    top10 = [dict(r, rank=i + 1) for i, r in enumerate(cur.fetchall())]
-
-                    cur.execute(
-                        'SELECT cat.category_code AS category, '
-                        '       ROUND(SUM(r.clicked_flag = "Y")   / NULLIF(COUNT(*),0) * 100, 1) AS ctr, '
-                        '       ROUND(SUM(r.purchased_flag = "Y") / NULLIF(SUM(r.clicked_flag="Y"),0) * 100, 1) AS cvr '
-                        'FROM customer_recommend_history r '
-                        'JOIN product_master  p   ON r.product_id  = p.product_id '
-                        'JOIN category_master cat ON p.category_id = cat.category_id '
-                        'GROUP BY cat.category_code ORDER BY ctr DESC'
-                    )
-                    by_category = list(cur.fetchall())
-            finally:
-                db.close()
-        except Exception:
-            pass
-        # DynamoDB — AI Score 분포 (5 bucket)
-        try:
-            items = get_dynamo_table().scan(
-                ProjectionExpression='dynamic_score, dynamic_grade'
-            ).get('Items', [])
-            from collections import defaultdict
-            buckets = ['0-20', '20-40', '40-60', '60-80', '80-100']
-            def _bucket(v):
-                v = float(v or 0)
-                if v < 20:  return '0-20'
-                if v < 40:  return '20-40'
-                if v < 60:  return '40-60'
-                if v < 80:  return '60-80'
-                return '80-100'
-            ds = defaultdict(int); gc = defaultdict(lambda: {'cnt': 0})
-            for i in items:
-                ds[_bucket(i.get('dynamic_score'))] += 1
-                gc[i.get('dynamic_grade', 'BASIC')]['cnt'] += 1
-            score_dist = {
-                'dynamic_score': [{'bucket': b, 'count': ds[b]} for b in buckets],
-            }
-            by_grade = [{'grade': g, 'cvr': 0} for g in GRADES if gc[g]['cnt']]
-        except Exception:
-            pass
-
-    # Vertex AI / BigQuery — 항상 mock (GCP 실연동 자리는 stub)
-    if USE_MOCK:
-        ai_kpi             = MOCKUP_AI_KPI
-        vertex_ai          = MOCKUP_VERTEX_AI
-        feature_importance = MOCKUP_FEATURE_IMPORTANCE
-        recommend_trend    = MOCKUP_RECOMMEND_TREND
-    else:
-        ai_kpi             = MOCKUP_AI_KPI
-        vertex_ai          = _stub_vertex_metrics() or MOCKUP_VERTEX_AI
-        feature_importance = _stub_feature_importance() or MOCKUP_FEATURE_IMPORTANCE
-        recommend_trend    = _aurora_recommend_trend_7day() or MOCKUP_RECOMMEND_TREND
-
+        return render_template('ai.html',
+            active='ai',
+            kpi4=MOCKUP_AI_KPI4,
+            trend_7d=MOCKUP_RECOMMEND_TREND,
+            top10=MOCKUP_RECOMMEND_TOP10,
+            cat_donut=MOCKUP_AI_CAT_DONUT,
+            age_perf=MOCKUP_AI_AGE_PERF,
+            grade_dist=MOCKUP_AI_GRADE_DIST,
+            feature_dist=MOCKUP_AI_FEATURE_DIST,
+            rec_data=MOCKUP_AI_RECDATA,
+            insight=MOCKUP_AI_INSIGHT,
+            ddb_hist=MOCKUP_AI_DDB_HISTOGRAM,
+            pr_models=MOCKUP_AI_PR_MODELS,
+        )
+    # USE_MOCK=false — 안 들어오는 데이터는 빈 list (JS 폴링이 채움)
     return render_template('ai.html',
         active='ai',
-        # 화이트 샘플 전용
-        kpi4=MOCKUP_AI_KPI4,
-        trend_7d=recommend_trend,
-        top10=top10,
-        cat_donut=MOCKUP_AI_CAT_DONUT,
-        age_perf=MOCKUP_AI_AGE_PERF,
-        grade_dist=MOCKUP_AI_GRADE_DIST,
-        feature_dist=MOCKUP_AI_FEATURE_DIST,
-        rec_data=MOCKUP_AI_RECDATA,
-        insight=MOCKUP_AI_INSIGHT,
-        ddb_hist=MOCKUP_AI_DDB_HISTOGRAM,
-        pr_models=MOCKUP_AI_PR_MODELS,
+        kpi4=_ai_kpi4_from_aws(),
+        trend_7d=[],   top10=[],
+        cat_donut=[],  age_perf=[],
+        grade_dist=[], feature_dist=[],
+        rec_data=[],   insight={'source': '-', 'rows': []},
+        ddb_hist=[],   pr_models=[],
     )
 
 
@@ -1260,50 +1209,13 @@ def _stub_aurora_summary():
     if USE_MOCK:
         return MOCKUP_DASH_KPI
 
-    # 운영 실 호출 — 부분 실패해도 카드 9개 구조 유지 (mockup baseline fallback)
-    cards = [dict(c) for c in MOCKUP_DASH_KPI]    # deep copy
+    # 운영 단 KPI 9 — 외부 호출 제거 (Aurora private + On-Prem Lambda timeout 으로 SSR 24초 hang 원인)
+    # 안 들어오는 데이터는 '-' 로 비워둠 (사용자 의도). 운영 단계에서 실 호출 복원 시 함수 분리 권장.
+    cards = [dict(c, value='-') for c in MOCKUP_DASH_KPI]
 
-    # 1. 통합 고객 수 / 2. 플랫폼 가입자 / 3. 분석 대상 고객 (On-Prem)
-    for idx, action in [(0, 'count_master_customer'), (1, 'count_users'), (2, 'count_users_consented')]:
-        try:
-            c = _call_onprem(action).get('count')
-            if c is not None:
-                cards[idx]['value'] = f'{int(c):,}'
-        except Exception:
-            pass
-
-    # 4. 누적 추천 이력 / 5. 활동 로그 (Aurora COUNT)
+    # DDB 최신 update_time 만 가벼운 호출 — 응답 빠름 (item 0 도 OK)
     try:
-        with get_db() as db, db.cursor() as cur:
-            cur.execute('SELECT COUNT(*) AS n FROM customer_recommend_history')
-            cards[3]['value'] = f"{cur.fetchone()['n']:,}"
-            cur.execute('SELECT COUNT(*) AS n FROM customer_dashboard_log')
-            n = cur.fetchone()['n']
-            cards[4]['value'] = f'{n/1_000_000:.1f}M' if n >= 1_000_000 else f'{n:,}'
-    except Exception:
-        pass
-
-    # 6. Redis Cache 수 (DBSIZE) — admin 은 redis client 미보유 → CloudWatch 또는 mockup fallback
-    # 7. CTR / 8. CVR (Aurora 비율)
-    try:
-        with get_db() as db, db.cursor() as cur:
-            cur.execute(
-                "SELECT "
-                "  ROUND(SUM(clicked_flag='Y')   / NULLIF(COUNT(*),0)              * 100, 1) AS ctr, "
-                "  ROUND(SUM(purchased_flag='Y') / NULLIF(SUM(clicked_flag='Y'),0) * 100, 1) AS cvr "
-                "FROM customer_recommend_history"
-            )
-            r = cur.fetchone()
-            if r['ctr'] is not None: cards[6]['value'] = f"{r['ctr']}%"
-            if r['cvr'] is not None: cards[7]['value'] = f"{r['cvr']}%"
-    except Exception:
-        pass
-
-    # 9. AI 추천 상태 — DDB 최신 update_time (Vertex AI 배치 시각)
-    try:
-        items = get_dynamo_table().scan(
-            ProjectionExpression='update_time', Limit=1,
-        ).get('Items', [])
+        items = get_dynamo_table().scan(ProjectionExpression='update_time', Limit=1).get('Items', [])
         if items and items[0].get('update_time'):
             cards[8]['sub'] = f"DynamoDB · 최근 갱신 {items[0]['update_time']}"
     except Exception:
@@ -1388,15 +1300,15 @@ def _s3_status_cards():
     iot  = raw.get('iot_count', 0)
     size_gb = (raw.get('total_size_bytes', 0) / 1024 / 1024 / 1024) if raw.get('total_size_bytes') else 0
 
-    cards = [dict(c) for c in MOCKUP_DASH_S3_5]   # baseline copy
-    cards[0]['value'] = f"{raw.get('raw_bucket_files', 0):,}"
-    cards[1]['value'] = f"{raw.get('today_ingested', 0):,}"
-    cards[2]['value'] = f"{iot:,}"
-    if size_gb:
-        cards[3]['value'] = f"{size_gb:.1f} GB"
+    # 카드 5개 구조 유지 + value/note 빈 값으로 초기화 (안 들어오는 항목은 그대로 비어 보임)
+    cards = [dict(c, value='-', note='-') for c in MOCKUP_DASH_S3_5]
+    if raw.get('raw_bucket_files'): cards[0]['value'] = f"{raw['raw_bucket_files']:,}"
+    if raw.get('today_ingested'):   cards[1]['value'] = f"{raw['today_ingested']:,}"
+    if iot:                         cards[2]['value'] = f"{iot:,}"
+    if size_gb:                     cards[3]['value'] = f"{size_gb:.1f} GB"
     if last.get('time'):
         cards[4]['value'] = last['time']
-        cards[4]['note']  = last.get('file', cards[4]['note'])
+        cards[4]['note']  = last.get('file', '-')
     return cards
 
 
@@ -1417,24 +1329,22 @@ def api_cloud_status():
 
 
 def _cloud3_from_aws():
-    """AWS 6 서비스 ping 결과를 dashboard 의 AWS 카드 1개로 집계.
-
-    GCP / On-Prem 은 stub / mock fallback.
-    """
+    """AWS / GCP / On-Prem 3 카드. 안 들어오는 데이터는 '-' 로 비워둠."""
     aws_list = _ping_cloud_status() or []
-    up = sum(1 for x in aws_list if x.get('state') == 'UP')
-    cards = [dict(c) for c in MOCKUP_DASH_CLOUD3]   # baseline copy
+    cards = [dict(c, state='-', sub='-') for c in MOCKUP_DASH_CLOUD3]   # 구조 유지, state/sub 빈 값
 
-    cards[0]['state'] = f'{up} / {len(aws_list)} 정상'
-    cards[0]['sub']   = ' · '.join(x['service'].replace('AWS ', '') for x in aws_list[:6])
+    if aws_list:
+        up = sum(1 for x in aws_list if x.get('state') == 'UP')
+        cards[0]['state'] = f'{up} / {len(aws_list)} 정상'
+        cards[0]['sub']   = ' · '.join(x['service'].replace('AWS ', '') for x in aws_list[:6])
 
-    # GCP — stub 응답 (자격증명 없으면 빈 dict)
+    # GCP — stub 응답 (자격증명 없으면 빈 dict → state '-' 유지)
     gcp = _stub_gcp_status() or {}
     if gcp.get('state'):
-        cards[1]['state'] = gcp.get('state', cards[1]['state'])
-        cards[1]['sub']   = gcp.get('note',  cards[1]['sub'])
+        cards[1]['state'] = gcp['state']
+        cards[1]['sub']   = gcp.get('note', '-')
 
-    # On-Prem — PrivateAPI ping (미구현) → mock 유지
+    # On-Prem — PrivateAPI ping (미구현) → state '-' 유지
     return cards
 
 
@@ -1508,17 +1418,18 @@ def api_dashboard_uploads():
 
 def _ai_kpi4_from_aws():
     """ai.html KPI 4 — Lambda CloudWatch metric 활용. Aurora 실패 시 mock fallback."""
-    cards = [dict(c) for c in MOCKUP_AI_KPI4]   # baseline copy
+    # 안 들어오는 항목은 '-' 로 비워둠
+    cards = [dict(c, value='-', sub='-') for c in MOCKUP_AI_KPI4]
     try:
         metrics = _ping_lambda_metrics() or []
-        rec  = next((m for m in metrics if 'recommendation' in m['fn']), None)
-        ingest = next((m for m in metrics if 'ingest' in m['fn']), None)
+        rec    = next((m for m in metrics if 'recommendation' in m['fn']), None)
+        ingest = next((m for m in metrics if 'ingest' in m['fn']),         None)
         if rec:
             cards[0]['value'] = f'{rec["invocations_1h"]:,}'
-            cards[0]['sub']   = f'lifesync-recommendation-engine · 최근 1h'
+            cards[0]['sub']   = 'lifesync-recommendation-engine · 최근 1h'
         if ingest:
             cards[1]['value'] = f'{ingest["invocations_1h"]:,}'
-            cards[1]['sub']   = f'lifesync-ingest · 최근 1h'
+            cards[1]['sub']   = 'lifesync-ingest · 최근 1h'
     except Exception:
         pass
     return cards
@@ -1534,6 +1445,57 @@ def api_ai_kpi4():
     if USE_MOCK:
         return jsonify(MOCKUP_AI_KPI4)
     return jsonify(_ai_kpi4_from_aws())
+
+
+# ── ai 차트 HTML fragment — Jinja2 partial 재사용 (server-rendered SVG) ───
+@app.route('/api/ai/chart/trend')
+@login_required
+def api_ai_chart_trend():
+    """7일 추이 SVG fragment. USE_MOCK=false 시 Aurora 실패하면 빈 차트."""
+    if USE_MOCK:
+        trend = MOCKUP_RECOMMEND_TREND
+    else:
+        try:    trend = _aurora_recommend_trend_7day() or []
+        except: trend = []
+    return render_template('_chart_ai_trend.j2', trend_7d=trend)
+
+
+@app.route('/api/ai/chart/donut')
+@login_required
+def api_ai_chart_donut():
+    """카테고리별 도넛 SVG fragment. 운영 호출은 Aurora category_master GROUP BY — 미구현 시 빈 차트."""
+    cat = MOCKUP_AI_CAT_DONUT if USE_MOCK else []
+    return render_template('_chart_ai_donut.j2', cat_donut=cat)
+
+
+@app.route('/api/ai/chart/age')
+@login_required
+def api_ai_chart_age():
+    """연령대별 추천 성과 진행바. 운영 호출은 On-Prem + Aurora JOIN — 미구현 시 빈 차트."""
+    age = MOCKUP_AI_AGE_PERF if USE_MOCK else []
+    return render_template('_chart_ai_age.j2', age_perf=age)
+
+
+@app.route('/api/ai/chart/histogram')
+@login_required
+def api_ai_chart_histogram():
+    """AI 예측 출현 분포 히스토그램. USE_MOCK=false 시 DDB scan 결과 — 빈 응답이면 빈 차트."""
+    if USE_MOCK:
+        hist = MOCKUP_AI_DDB_HISTOGRAM
+    else:
+        try:
+            items = get_dynamo_table().scan(ProjectionExpression='dynamic_score').get('Items', [])
+            buckets = [('0-20', '#ef4444'), ('20-40', '#f59e0b'), ('40-60', '#facc15'),
+                       ('60-80', '#3b82f6'), ('80-100', '#16a34a')]
+            counts = [0, 0, 0, 0, 0]
+            for it in items:
+                v = float(it.get('dynamic_score') or 0)
+                idx = 4 if v >= 80 else 3 if v >= 60 else 2 if v >= 40 else 1 if v >= 20 else 0
+                counts[idx] += 1
+            hist = [{'bucket': b, 'count': c, 'color': col} for (b, col), c in zip(buckets, counts) if c]
+        except Exception:
+            hist = []
+    return render_template('_chart_ai_histogram.j2', ddb_hist=hist)
 
 
 @app.route('/api/ops/wearable')
@@ -1559,7 +1521,7 @@ def stream_wearable():
     def gen():
         while True:
             yield f"data: {json.dumps(wearable_engine.snapshot(), ensure_ascii=False)}\n\n"
-            time.sleep(3)
+            time.sleep(1)
     return Response(gen(), mimetype='text/event-stream', headers={
         'Cache-Control':     'no-cache',
         'X-Accel-Buffering': 'no',   # Nginx 버퍼링 비활성
@@ -1808,20 +1770,33 @@ def ops():
     실 AWS 데이터는 API 라우트 (/api/network/tgw 등) 로 별도 노출.
     """
     wearable_snap = wearable_engine.snapshot()
+    if USE_MOCK:
+        topology, platform, data, gvm, conn, gcp, onprem, endpoints = (
+            MOCKUP_NET_TOPOLOGY, MOCKUP_NET_AWS_PLATFORM, MOCKUP_NET_AWS_DATA,
+            MOCKUP_NET_AWS_GROUPVM, MOCKUP_NET_AWS_CONNECTIVITY,
+            MOCKUP_NET_GCP, MOCKUP_NET_ONPREM, MOCKUP_NET_API_ENDPOINTS,
+        )
+    else:
+        # USE_MOCK=false — VPC 카드는 JS 폴링 (30s) 으로 _ping_* 결과 채움. SSR 은 빈 카드 + 토폴로지/엔드포인트만 정적
+        empty_card = {'title': '', 'badge': '', 'badge_bg': '', 'badge_color': '', 'rows': []}
+        topology = MOCKUP_NET_TOPOLOGY                # 토폴로지는 디자인 (인프라 그림) — mock 유지
+        endpoints = MOCKUP_NET_API_ENDPOINTS          # API 라우트 listing — 정적 디자인
+        platform = dict(MOCKUP_NET_AWS_PLATFORM, rows=[])  # 제목 유지, rows 빈
+        data     = dict(MOCKUP_NET_AWS_DATA,     rows=[])
+        gvm      = dict(MOCKUP_NET_AWS_GROUPVM,  rows=[])
+        conn     = dict(MOCKUP_NET_AWS_CONNECTIVITY, rows=[])
+        gcp      = dict(MOCKUP_NET_GCP,    rows=[])
+        onprem   = dict(MOCKUP_NET_ONPREM, rows=[])
 
     return render_template('ops.html',
         active='ops',
-        topology=MOCKUP_NET_TOPOLOGY,
-        net_platform=MOCKUP_NET_AWS_PLATFORM,
-        net_data=MOCKUP_NET_AWS_DATA,
-        net_groupvm=MOCKUP_NET_AWS_GROUPVM,
-        net_conn=MOCKUP_NET_AWS_CONNECTIVITY,
-        net_gcp=MOCKUP_NET_GCP,
-        net_onprem=MOCKUP_NET_ONPREM,
+        topology=topology,
+        net_platform=platform, net_data=data, net_groupvm=gvm,
+        net_conn=conn, net_gcp=gcp, net_onprem=onprem,
         wearable_kpi=wearable_snap['kpi'],
         wearable_red=wearable_snap['red'],
         wearable_yellow=wearable_snap['yellow'],
-        endpoints=MOCKUP_NET_API_ENDPOINTS,
+        endpoints=endpoints,
     )
 
 

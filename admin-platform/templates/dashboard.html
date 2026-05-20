@@ -81,7 +81,7 @@ window.addEventListener('DOMContentLoaded', function () {
     var s3Count    = {{ s3_cards|length }};
 
     AutoRefresh.register({
-        interval: 60000,
+        interval: 30000,
         fetches: [
             {
                 url: '/api/dashboard/summary',

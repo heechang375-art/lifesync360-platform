@@ -147,7 +147,7 @@ def snapshot():
         send_rate = (active * 100 // registered) if registered else 0
         return {
             'kpi': [
-                {'label': '활성 디바이스',   'value': f'{active}',  'sub': f'/ 등록 {registered} · 최근 3초', 'accent': '#3b82f6'},
+                {'label': '활성 디바이스',   'value': f'{active}',  'sub': f'/ 등록 {registered} · 최근 1초', 'accent': '#3b82f6'},
                 {'label': '송신율',         'value': f'{send_rate}%', 'sub': '활성 / 등록',                  'accent': '#16a34a'},
                 {'label': '🔴 건강 RED',    'value': str(red_n),    'sub': 'AHA/WHO 임상 임계',             'accent': '#dc2626'},
                 {'label': '🟡 건강 YELLOW', 'value': str(yellow_n), 'sub': '경계 영역 — 모니터링',           'accent': '#f59e0b'},
@@ -160,7 +160,7 @@ def snapshot():
 # ── 백그라운드 루프 ────────────────────────────────────────
 _loop_started = False
 
-def start_loop(interval=3.0):
+def start_loop(interval=1.0):
     global _loop_started
     if _loop_started:
         return

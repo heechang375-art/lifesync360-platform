@@ -1,12 +1,13 @@
 {% extends 'base.html' %}
 {% block title %}Network & Connectivity — Admin{% endblock %}
 
-{% macro vpc_card(c) -%}
+{% macro vpc_card(c, prefix='') -%}
 <div class="card">
     <div class="card-title" style="display:flex; align-items:center; justify-content:space-between;">
         <span>📦 {{ c.title }}</span>
         {% if c.badge %}<span class="pill" style="background:{{ c.badge_bg }}; color:{{ c.badge_color }};">{{ c.badge }}</span>{% endif %}
     </div>
+    <div {% if prefix %}id="ops-rows-{{ prefix }}"{% endif %}>
     {% for it in c.rows %}
     <div class="vpc-item">
         <div>
@@ -18,6 +19,7 @@
         {% endif %}
     </div>
     {% endfor %}
+    </div>
 </div>
 {%- endmacro %}
 
@@ -51,26 +53,28 @@
 </section>
 
 <!-- AWS 3 VPC -->
-<section class="section" style="background:transparent; border:none; padding:0;">
+<section class="section">
+    <div class="section-title">📦 AWS VPC <span class="pipe">|</span> <span class="sub">Platform · Data · Group VM</span><span class="ts" id="ts-ops-vpc">갱신: --:--:--</span></div>
     <div class="grid grid-3">
-        {{ vpc_card(net_platform) }}
-        {{ vpc_card(net_data) }}
-        {{ vpc_card(net_groupvm) }}
+        {{ vpc_card(net_platform, 'pf') }}
+        {{ vpc_card(net_data, 'dt') }}
+        {{ vpc_card(net_groupvm, 'gvm') }}
     </div>
 </section>
 
 <!-- AWS Connectivity / GCP / On-Prem -->
-<section class="section" style="background:transparent; border:none; padding:0; margin-top:10px;">
+<section class="section">
+    <div class="section-title">🔗 Connectivity · GCP · On-Prem <span class="pipe">|</span> <span class="sub">TGW · VPN · Local Lab</span><span class="ts" id="ts-ops-conn">갱신: --:--:--</span></div>
     <div class="grid grid-3">
-        {{ vpc_card(net_conn) }}
-        {{ vpc_card(net_gcp) }}
-        {{ vpc_card(net_onprem) }}
+        {{ vpc_card(net_conn, 'cn') }}
+        {{ vpc_card(net_gcp, 'gcp') }}
+        {{ vpc_card(net_onprem, 'on') }}
     </div>
 </section>
 
 <!-- WEARABLE 실시간 — KPI 4 (활성 / 송신율 / RED / YELLOW) -->
 <section class="section">
-    <div class="section-title">❤ WEARABLE 실시간 <span class="pipe">|</span> <span class="sub">(KINESIS · SSE 3s)</span><span class="ts" id="ts-we-kpi">갱신: --:--:--</span></div>
+    <div class="section-title">❤ WEARABLE 실시간 <span class="pipe">|</span> <span class="sub">(KINESIS · SSE 1s)</span><span class="ts" id="ts-we-kpi">갱신: --:--:--</span></div>
     <div class="grid grid-4">
         {% for k in wearable_kpi %}
         <div class="kpi" style="border-left-color: {{ k.accent }};">
@@ -184,6 +188,117 @@ window.addEventListener('DOMContentLoaded', function () {
         AutoRefresh.stampNow('ts-we-red');
         AutoRefresh.stampNow('ts-we-yellow');
     });
+
+    // ── VPC 카드 자동 갱신 (60s) — Connectivity / GroupVM / On-Prem ─────
+    function vpcRowsHtml(rows) {
+        return rows.map(function (it) {
+            var state = it.state
+                ? '<span class="vpc-item-state" style="background:#dcfce7; color:' +
+                  esc(it.state_color || '#16a34a') + ';">● ' + esc(it.state) + '</span>'
+                : '';
+            return '<div class="vpc-item">' +
+                     '<div>' +
+                       '<div class="vpc-item-name">' + esc(it.name) + '</div>' +
+                       '<div class="vpc-item-sub">'  + esc(it.sub || '') + '</div>' +
+                     '</div>' + state +
+                   '</div>';
+        }).join('');
+    }
+
+    AutoRefresh.register({
+        interval: 30000,
+        fetches: [
+            // Connectivity: TGW + VPN 합산
+            {
+                url: '/api/network/tgw',
+                apply: function (tgw) {
+                    if (!tgw || !tgw.id) return;
+                    window.__opsTgw = tgw;
+                    renderConn();
+                },
+            },
+            {
+                url: '/api/network/vpn',
+                apply: function (vpn) {
+                    if (!vpn) return;
+                    window.__opsVpn = vpn;
+                    renderConn();
+                },
+            },
+            // GroupVM: EC2 7개 list
+            {
+                url: '/api/vm/group',
+                apply: function (data) {
+                    if (!Array.isArray(data)) return;
+                    var rows = data.map(function (i) {
+                        var st = (i.state || '').toLowerCase();
+                        var color = st === 'running' ? '#16a34a' : (st === 'stopped' ? '#dc2626' : '#94a3b8');
+                        return {
+                            name:        i.name || i.instance_id || '-',
+                            sub:         (i.instance_id || '-') + ' · ' + (i.private_ip || ''),
+                            state:       i.state || '-',
+                            state_color: color,
+                        };
+                    });
+                    AutoRefresh.replaceTbody('ops-rows-gvm', vpcRowsHtml(rows));
+                    AutoRefresh.stampNow('ts-ops-vpc');
+                },
+            },
+            // On-Prem: Local Lab 환경 list
+            {
+                url: '/api/admin/local-lab-status',
+                apply: function (data) {
+                    var envs = (data && data.environments) || [];
+                    var rows = envs.map(function (e) {
+                        return {
+                            name:        e.env  || e.name || '-',
+                            sub:         e.note || '',
+                            state:       e.state || '-',
+                            state_color: (e.state === 'Running' || e.state === 'Healthy') ? '#16a34a' : '#dc2626',
+                        };
+                    });
+                    AutoRefresh.replaceTbody('ops-rows-on', vpcRowsHtml(rows));
+                    AutoRefresh.stampNow('ts-ops-conn');
+                },
+            },
+            // Data VPC: Kinesis 단일 상태 — 기존 4행 중 Kinesis 행만 갱신 어려워 카드 통째 재구성
+            {
+                url: '/api/kinesis/status',
+                apply: function (data) {
+                    if (!data || !data.StreamDescription) return;
+                    var sd = data.StreamDescription;
+                    var rows = [
+                        {name: 'S3 Raw Bucket', sub: 'lifesync-raw',     state: '',         state_color: ''},
+                        {name: 'Kinesis Stream', sub: sd.StreamName || '-',
+                         state: sd.StreamStatus || '-',
+                         state_color: sd.StreamStatus === 'ACTIVE' ? '#16a34a' : '#dc2626'},
+                        {name: 'Glue ETL',  sub: 'lifesync-etl',  state: '', state_color: ''},
+                        {name: 'EMR',       sub: 'on-demand',     state: '', state_color: ''},
+                    ];
+                    AutoRefresh.replaceTbody('ops-rows-dt', vpcRowsHtml(rows));
+                    AutoRefresh.stampNow('ts-ops-vpc');
+                },
+            },
+        ],
+    });
+
+    function renderConn() {
+        var tgw = window.__opsTgw, vpn = window.__opsVpn;
+        if (!tgw && !vpn) return;
+        var rows = [];
+        if (tgw && tgw.id) {
+            rows.push({name: 'Transit Gateway', sub: tgw.id + ' · attachments ' + (tgw.attachments || 0),
+                       state: tgw.state || '-', state_color: tgw.state === 'available' ? '#16a34a' : '#dc2626'});
+        }
+        if (vpn && Array.isArray(vpn.tunnels)) {
+            var up = vpn.tunnels.filter(function (t) { return (t.status || '').toUpperCase() === 'UP'; }).length;
+            rows.push({name: 'Site to Site VPN', sub: vpn.tunnels.length + ' tunnels',
+                       state: up + ' / ' + vpn.tunnels.length + ' UP',
+                       state_color: up === vpn.tunnels.length ? '#16a34a' : '#f59e0b'});
+        }
+        AutoRefresh.replaceTbody('ops-rows-cn', vpcRowsHtml(rows));
+        AutoRefresh.stampNow('ts-ops-conn');
+    }
 });
 </script>
 {% endblock %}
