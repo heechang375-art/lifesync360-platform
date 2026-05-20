@@ -290,7 +290,7 @@ def api_me(payload):
 
     grade = None
     try:
-        item  = get_dynamo_table().get_item(Key={'global_id': global_id}).get('Item', {})
+        item  = _ddb_get_latest(global_id)
         grade = item.get('dynamic_grade')
     except Exception:
         pass
@@ -453,19 +453,31 @@ def _recommendations_mock():
     }
 
 
+def _ddb_get_latest(global_id):
+    """DDB lifesync_customer_result HASH(global_id)+RANGE(update_time) 에서 최신 1건.
+    GetItem 은 schema 상 두 key 다 필요 — Query + ScanIndexForward=False + Limit 1 로 최신만."""
+    try:
+        r = get_dynamo_table().query(
+            KeyConditionExpression='global_id = :g',
+            ExpressionAttributeValues={':g': global_id},
+            ScanIndexForward=False,
+            Limit=1,
+        )
+        items = r.get('Items') or []
+        return items[0] if items else {}
+    except Exception:
+        return {}
+
 def _fetch_ddb_meta(global_id):
     """DDB lifesync_customer_result → (grade, dynamic_score, health_score, vip_prob, nba)"""
-    try:
-        item = get_dynamo_table().get_item(Key={'global_id': global_id}).get('Item', {})
-        return (
-            item.get('dynamic_grade', 'BASIC'),
-            float(item.get('dynamic_score') or 0),
-            float(item.get('health_score')  or 0),
-            float(item.get('vip_prob')      or 0),
-            item.get('next_best_action'),
-        )
-    except Exception:
-        return 'BASIC', 0.0, 0.0, 0.0, None
+    item = _ddb_get_latest(global_id)
+    return (
+        item.get('dynamic_grade', 'BASIC'),
+        float(item.get('dynamic_score') or 0),
+        float(item.get('health_score')  or 0),
+        float(item.get('vip_prob')      or 0),
+        item.get('next_best_action'),
+    )
 
 
 def _fetch_redis_cached_ids(global_id):
@@ -719,7 +731,7 @@ def api_campaigns(payload):
         return jsonify(get_mock_campaigns(grade))
 
     try:
-        item  = get_dynamo_table().get_item(Key={'global_id': payload['gid']}).get('Item', {})
+        item  = _ddb_get_latest(payload['gid'])
         grade = item.get('dynamic_grade', 'BASIC')
     except Exception:
         pass
@@ -766,8 +778,7 @@ def api_dashboard(payload):
         h = get_mock_health(payload['sub'])
         return jsonify({**h, 'no_data': False})
 
-    result = get_dynamo_table().get_item(Key={'global_id': payload['gid']})
-    item   = result.get('Item')
+    item = _ddb_get_latest(payload['gid'])
     if not item:
         return jsonify({'no_data': True})
 
