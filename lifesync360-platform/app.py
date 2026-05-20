@@ -11,7 +11,9 @@ import boto3
 from flask import Flask, render_template, request, redirect, url_for, jsonify
 
 app = Flask(__name__)
-JWT_SECRET          = os.environ.get('JWT_SECRET', 'dev-jwt-secret-lifesync360-32bytes!!')
+JWT_SECRET          = os.environ.get('JWT_SECRET')
+if not JWT_SECRET:
+    raise RuntimeError('JWT_SECRET 환경변수 누락 — IaC env 주입 확인 필요')
 USE_MOCK            = os.environ.get('USE_MOCK', 'true').lower() != 'false'
 PROFILE_SYNC_LAMBDA  = os.environ.get('PROFILE_SYNC_LAMBDA', '')
 ONPREM_QUERY_LAMBDA  = os.environ.get('ONPREM_QUERY_LAMBDA', '')
@@ -20,7 +22,6 @@ AWS_REGION           = os.environ.get('AWS_REGION', 'ap-northeast-2')
 # mock_data는 항상 import (인증 + USE_MOCK 분기 둘 다에서 사용)
 from mock_data import (
     MOCK_USERS, MOCK_RECOMMENDATIONS, PRODUCTS_MAP, get_mock_health,
-    get_mock_upgrade_actions, MOCK_MY_PRODUCTS, MOCK_CONSENTED_KEYS,
     get_mock_campaigns,
 )
 
@@ -401,7 +402,7 @@ def api_event(payload):
         finally:
             db.close()
     except Exception:
-        pass
+        app.logger.exception('event insert failed (event_type=%s, gid=%s)', event_type, global_id)
     return jsonify({'status': 'ok'})
 
 
@@ -663,15 +664,6 @@ def api_recommendations(payload):
     })
 
 
-@app.route('/api/upgrade-actions')
-@require_jwt
-def api_upgrade_actions(payload):
-    if USE_MOCK:
-        return jsonify(get_mock_upgrade_actions(payload['sub']))
-
-    return jsonify([])
-
-
 @app.route('/api/my-applications')
 @require_jwt
 def api_my_applications(payload):
@@ -711,59 +703,8 @@ def api_my_applications(payload):
                 rows.append({**r, 'created_at': str(r['created_at']) if r.get('created_at') else None})
             return jsonify(rows)
     except Exception:
+        app.logger.exception('my-applications query failed (gid=%s)', payload['gid'])
         return jsonify([])
-
-
-@app.route('/api/my-products')
-@require_jwt
-def api_my_products(payload):
-    if USE_MOCK:
-        company_key = request.args.get('company', '')
-        consented   = MOCK_CONSENTED_KEYS.get(payload['sub'], set())
-        if company_key and company_key not in consented:
-            return jsonify({'error': 'consent_required'}), 403
-        user_prods = MOCK_MY_PRODUCTS.get(payload['sub'], {})
-        return jsonify(user_prods.get(company_key, []))
-
-    global_id   = payload['gid']
-    company_key = request.args.get('company', '')
-
-    if company_key:
-        try:
-            consent_data = _call_onprem('get_consent', global_id=global_id)
-        except ValueError:
-            return jsonify({'error': 'consent_check_failed'}), 500
-        consents = {c['domain']: c.get('consent_flag') for c in consent_data.get('consents', [])}
-        if consents.get(company_key) != 'Y':
-            return jsonify({'error': 'consent_required'}), 403
-
-    db = get_db()
-    try:
-        with db.cursor() as cur:
-            query = """
-                SELECT p.product_code, p.product_name, p.description,
-                       p.target_grade, p.risk_level,
-                       c.company_code, c.company_name, cat.category_code,
-                       h.recommended_at
-                FROM customer_recommend_history h
-                JOIN product_master  p   ON h.product_id  = p.product_id
-                JOIN company_master  c   ON p.company_id  = c.company_id
-                JOIN category_master cat ON p.category_id = cat.category_id
-                WHERE h.global_id = %s
-                  AND h.purchased_flag = 'Y'
-                  AND p.active_flag = 'Y'
-            """
-            params = [global_id]
-            if company_key:
-                query += ' AND c.company_code = %s'
-                params.append(company_key)
-            query += ' ORDER BY h.recommended_at DESC'
-            cur.execute(query, params)
-            products = cur.fetchall()
-    finally:
-        db.close()
-
-    return jsonify(products)
 
 
 @app.route('/api/campaigns')
@@ -796,6 +737,7 @@ def api_campaigns(payload):
             """, (grade,))
             rows = cur.fetchall()
     except Exception:
+        app.logger.exception('campaigns query failed (grade=%s)', grade)
         rows = []
     finally:
         db.close()
@@ -812,7 +754,6 @@ def health():
         'status': 'ok',
         'jwt_from_env': bool(os.environ.get('JWT_SECRET')),
         'jwt_len':      len(JWT_SECRET),
-        'jwt_prefix':   JWT_SECRET[:8],
         'use_mock':     USE_MOCK,
         'dynamo_table': os.environ.get('DYNAMO_TABLE', 'NOT_SET'),
     }
