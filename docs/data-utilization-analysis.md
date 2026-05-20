@@ -180,7 +180,7 @@ A-1-6 (세그먼트 분포), A-1-7 (AI 적재 정합)은 가끔 확인용. A-1-8
 | `customer_subscription` 신설 | global_id, product_id, company_code, subscription_date, status, terminated_at |
 | `subscription_event_log` 신설 | 가입/해지/변경 이벤트 이력 |
 
-→ 화면: 플랫폼 my-products (가입 상품), 어드민 user_detail "보유 상품" 탭. 현재 `recommend_history.purchased_flag`는 추천 기반 구매만 추적, 실제 그룹사에서 가입한 상품은 별도 동기화 필요.
+→ 화면: 어드민 user_detail "보유 상품" 탭 (Aurora `customer_recommend_history` 직접 SELECT). 현재 `recommend_history.purchased_flag`는 추천 기반 구매만 추적, 실제 그룹사에서 가입한 상품은 별도 동기화 필요. (플랫폼 `/api/my-products` 라우트는 2026-05-20 제거 — commit a6cfd58)
 
 ## [가끔 확인 — 거버넌스/감사] C-2. PII 접근 감사 로그
 | 추가 테이블 | 보여줄 메트릭 |

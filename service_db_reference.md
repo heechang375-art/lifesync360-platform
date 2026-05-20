@@ -322,8 +322,7 @@ option_value는 RAND 기반 자동 생성 (interest_rate=2.5~5%, annual_fee=1000
 
 [고객 행동]
    ├─ /api/recommendations → customer_recommend_history INSERT (dynamic_grade/score는 DynamoDB)
-   ├─ /api/event           → customer_dashboard_log INSERT
-   └─ /api/my-products     → customer_recommend_history SELECT (purchased_flag='Y')
+   └─ /api/event           → customer_dashboard_log INSERT
 
 [어드민 조회]
    ├─ overview     → product_master, campaign_master 집계 + (recommend_history 누적 시 funnel)
@@ -358,7 +357,7 @@ option_value는 RAND 기반 자동 생성 (interest_rate=2.5~5%, annual_fee=1000
 
 ### Aurora `company_code` ↔ 온프레 `consent.domain` 매핑
 
-**상품/추천 매핑 대상** (어드민 funnel, 플랫폼 my-products 등에서 변환 필요):
+**상품/추천 매핑 대상** (어드민 funnel 등에서 변환 필요):
 
 | Aurora company_code | 온프레 consent.domain |
 |---|---|

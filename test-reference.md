@@ -106,31 +106,7 @@ curl http://localhost:5000/api/recommendations \
   -H "Authorization: Bearer $TOKEN"
 ```
 
-### 4-5. MY 탭 — 계열사별 보유 상품
-
-```bash
-# 동의된 계열사 (정상 200)
-curl "http://localhost:5000/api/my-products?company=bank" \
-  -H "Authorization: Bearer $TOKEN"
-
-# 미동의 계열사 (403 consent_required 확인)
-# test2 계정 로그인 후 inet_ins로 요청 시
-curl "http://localhost:5000/api/my-products?company=inet_ins" \
-  -H "Authorization: Bearer $TOKEN"
-# 기대값: {"error": "consent_required"} HTTP 403
-```
-
-사용 가능한 company 값: `bank` `card` `insurance` `inet_ins` `securities` `healthcare` `hospital`
-
-### 4-6. 등급 업그레이드 액션
-
-```bash
-# 언제: 업그레이드 가이드 탭 개인화 액션 항목 확인
-curl http://localhost:5000/api/upgrade-actions \
-  -H "Authorization: Bearer $TOKEN"
-```
-
-### 4-7. 헬스체크
+### 4-5. 헬스체크
 
 ```bash
 curl http://localhost:5000/health         # platform
@@ -182,14 +158,9 @@ SELECT consent_key,
 FROM consent
 GROUP BY consent_key;
 
--- 동의 없이 my-products 403이 발생해야 하는 유저 확인
-SELECT c.global_id, c.consent_key, c.consent_yn
-FROM consent c
-JOIN users u ON u.global_id = c.global_id
-WHERE c.consent_key = 'securities' AND c.consent_yn = 'N';
 ```
 
-**언제**: /api/consent POST 후 반영 확인, my-products 403 원인 추적
+**언제**: /api/consent POST 후 반영 확인
 
 ### 5-3. 상품 마스터 조회
 

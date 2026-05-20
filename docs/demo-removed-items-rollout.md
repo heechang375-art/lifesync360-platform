@@ -40,10 +40,12 @@
 - 빈 화면 시연 어색
 
 ### 운영 구현 방법
+> 참고: `/api/my-products` 라우트 + `MOCK_MY_PRODUCTS` + `MOCK_CONSENTED_KEYS` 는 2026-05-20 (commit a6cfd58) 에서 통째 제거됨. 복원 시 새 라우트 신설 필요.
+
 1. **테이블 신설**: `customer_subscription` 또는 `customer_purchase`
    - 컬럼: `subscription_id`, `global_id`, `product_id`, `company_code`, `subscription_date`, `status` 등
 2. **결제/구매 이벤트 → INSERT**: 실제 구매 시점에 그 테이블에 row 추가
-3. **`/api/my-products` 수정**: `customer_recommend_history` → `customer_subscription` 조회로 변경
+3. **`/api/my-products` 새로 신설**: `customer_subscription` 조회 기반으로 라우트 + 동의 체크 로직 재구현
 4. **`index.html` MY 탭 복원**: 계열사 메뉴 + my-detail 영역 + JS 함수 다시 추가
 
 ---
@@ -76,8 +78,10 @@
 - `upgrade_actions_engine`이 동작하려면 DynamoDB(grade/점수) + 온프레(consent) + Aurora(이력) 데이터 모두 필요한데 일부 부재
 
 ### 운영 구현 방법
+> 참고: 2026-05-20 (commit a6cfd58) 에서 `/api/upgrade-actions` 라우트 + `upgrade_actions_engine.py` + `_MOCK_USER_CONTEXT` 통째 제거됨. 복원 시 라우트와 엔진을 새로 작성해야 함.
+
 1. **데이터 충족**: DynamoDB에 grade/scores 적재 + 온프레 consent 호출 가능 + Aurora 추천 이력 누적
-2. **`api_upgrade_actions` 비Mock 분기 구현**: `upgrade_actions_engine.get_personalized_actions()` 호출 + 결과 jsonify
+2. **엔진 + 라우트 재작성**: `upgrade_actions_engine.py` 신규 작성 (개인화 룰) + `/api/upgrade-actions` 라우트 신설 + USE_MOCK 분기로 엔진 호출
 3. **`settings.html` 섹션 복원**: `upgrade-actions-section` + 관련 fetch + 표시 JS 다시 추가
 
 ---

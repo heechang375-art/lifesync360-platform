@@ -51,8 +51,6 @@
 | GitHub → CodeCommit 미러 CI | ✅ |
 | taskdef.json / buildspec.yml / appspec.yaml (platform + admin) | ✅ |
 | /api/me name/grade 연동 (PII 복호화 + DynamoDB grade) | ⏳ |
-| /api/my-products 운영 연결 | ⏳ |
-| upgrade_actions 운영 연결 | ⏳ |
 | Aurora users_ref 동기화 테이블 설계 및 구축 (어드민 유저목록 이름/이메일 표시) | ⏳ |
 
 ### 클라우드 인프라
@@ -884,7 +882,7 @@ ONPREM_QUERY_LAMBDA=lifesync-onprem-customer-query
 |---|---|
 | 회원가입 흐름 제거 | `/api/register` + `/register` + `register.html` + `_resolve_global_id` + `PROFILE_SYNC_LAMBDA` 환경변수 |
 | JWT 발급 시크릿 SSM 화 | SSM `/lifesync360/jwt-secret` (HS256 대칭키) 만 사용 — secret 으로 platform 이 토큰 직접 발급/검증. `/lifesync360/jwt-token` 별도 안 만듦 (2026-05-20 정정) |
-| 죽은 API 제거 (Group 1) | `/api/upgrade-actions` + `/api/my-products` + `MOCK_MY_PRODUCTS` + `MOCK_CONSENTED_KEYS` + `upgrade_actions_engine.py` 통째 |
+| 죽은 API 제거 (Group 1) ✅ 완료 (2026-05-20, commit a6cfd58) | `/api/upgrade-actions` + `/api/my-products` + `MOCK_MY_PRODUCTS` + `MOCK_CONSENTED_KEYS` + `upgrade_actions_engine.py` 통째 |
 | 캠페인 복원 | `/api/campaigns` + `MOCK_CAMPAIGNS_BY_GRADE` 다시 살림 (홈 탭 캠페인 배너 표시 위해) |
 | 추천 top10 제한 | `_fetch_products` LIMIT 20 → 10, `_recommendations_mock` flat[:20] → flat[:10] |
 | ETL 책임 분리 | `_enrich_and_record` 가중치 계산 (`recommendation_score / grade_bonus / nba_bonus / cross_bonus`) 제거 — 정렬은 Aurora `priority_rank` 단일 출처 |
@@ -1438,8 +1436,6 @@ aws ssm get-parameter \
 | private_api Ansible 재배포 (werkzeug 추가 + 인증 엔드포인트 4개) | 온프레미스 담당자 | roles/private_api/ |
 | 동의 고객 선별 Lambda 구현 | 개발 | ETL 파이프라인 AWS→GCP 전송 전 consent 필터링 |
 | Aurora users_ref 동기화 테이블 구축 (어드민 유저목록 이름/이메일, total_users 정확도) | 개발 | on-prem users → Aurora 주기 동기화 |
-| /api/my-products 운영 연결 | 개발 | Aurora consent 테이블 체크 |
-| upgrade_actions 운영 연결 | 개발 | DynamoDB/Aurora 실데이터 ctx |
 
 ---
 

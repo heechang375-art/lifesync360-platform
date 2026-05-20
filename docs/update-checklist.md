@@ -109,7 +109,7 @@ Gantt 차트 날짜 구버전. 현재 진행 상황 기준으로 완료/진행 �
 잔여 항목:
 - Secrets Manager 값 입력 (배포 시점)
 - CloudFormation 스택 실제 배포
-- settings 포인트 Aurora 연동, /api/my-products 운영 연결, upgrade_actions 운영 연결
+- settings 포인트 Aurora 연동
 
 ---
 
