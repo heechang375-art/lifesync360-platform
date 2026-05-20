@@ -11,7 +11,7 @@ import boto3
 from flask import Flask, render_template, request, redirect, url_for, jsonify
 
 app = Flask(__name__)
-JWT_SECRET          = os.environ.get('JWT_SECRET','fdd78ce2ec714307b9598e37907cb47bbd9168cf2a5d0653f097ad82d7743d98')
+JWT_SECRET          = os.environ.get('JWT_SECRET')
 if not JWT_SECRET:
     raise RuntimeError('JWT_SECRET 환경변수 누락 — IaC env 주입 확인 필요')
 USE_MOCK            = os.environ.get('USE_MOCK', 'true').lower() != 'false'
