@@ -22,19 +22,25 @@
 
     <main class="content" style="padding-bottom: 100px;">
         <div class="product-hero">
-            <span class="chip-type">{{ item.type }}</span>
-            {% if item.tag %}<span class="chip-tag {% if item.tag == '맞춤추천' %}tag-primary{% else %}tag-secondary{% endif %}">{{ item.tag }}</span>{% endif %}
+            <div class="product-chips">
+                <span class="chip-type">{{ item.type }}</span>
+                {% if item.tag %}<span class="chip-tag {% if item.tag == '맞춤추천' %}tag-primary{% else %}tag-secondary{% endif %}">{{ item.tag }}</span>{% endif %}
+            </div>
             <h1 class="product-name">{{ item.name }}</h1>
-            <p class="product-desc">{{ item.desc }}</p>
         </div>
 
         <div class="product-detail-card">
             <p class="detail-heading">주요 혜택</p>
             <ul class="detail-list-items">
                 {% for d in item.detail %}
-                <li>{{ d }}</li>
+                <li><strong>{{ d.key }}</strong> · {{ d.value }}</li>
                 {% endfor %}
             </ul>
+        </div>
+
+        <div class="product-detail-card" style="margin-top: 16px;">
+            <p class="detail-heading">상품 설명</p>
+            <p class="product-desc" style="margin: 0;">{{ item.desc }}</p>
         </div>
     </main>
 

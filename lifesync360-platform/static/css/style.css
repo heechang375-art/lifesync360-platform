@@ -154,8 +154,9 @@ body {
 }
 
 
-.chip-type { font-size: 10px; font-weight: 700; color: var(--text-sub); display: block; margin-bottom: 4px; }
-.chip-tag { font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 20px; display: inline-block; margin-bottom: 8px; }
+.product-chips { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 4px; }
+.chip-type { font-size: 10px; font-weight: 700; color: var(--text-sub); }
+.chip-tag { font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 20px; }
 .tag-primary { background: #EFF6FF; color: var(--primary); }
 .tag-secondary { background: #F1F5F9; color: var(--text-sub); }
 
