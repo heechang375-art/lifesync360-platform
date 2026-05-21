@@ -41,18 +41,14 @@
                 </div>
             </div>
 
-            <!-- 홈 추천 미리보기 -->
+            <!-- 홈 추천 -->
             <div id="home-rec-section">
                 <div class="home-rec-header">
                     <span class="home-rec-title">나를 위한 추천</span>
-                    <button class="home-rec-more" onclick="switchToRecommendTab()">전체보기</button>
                 </div>
                 <div class="home-rec-cats" id="home-rec-cats"></div>
             </div>
         </section>
-
-        <!-- ── 추천 탭 (JS 가 innerHTML 로 채움) ── -->
-        <section id="tab-recommend" class="tab-content"></section>
 
         <!-- ── MY 탭 ── -->
         <section id="tab-my" class="tab-content">
@@ -84,12 +80,6 @@
             </svg>
             <span>홈</span>
         </button>
-        <button class="nav-btn" data-tab="recommend">
-            <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
-            </svg>
-            <span>추천</span>
-        </button>
         <button class="nav-btn" data-tab="my">
             <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="12" cy="8" r="4"/>
@@ -120,12 +110,11 @@
         document.getElementById('app-root').style.display = '';
         const headers = { 'Authorization': `Bearer ${token}` };
 
-        const [meRes, dashRes, recRes, appsRes, campRes] = await Promise.all([
+        const [meRes, dashRes, recRes, appsRes] = await Promise.all([
             fetch('/api/me', { headers }),
             fetch('/api/dashboard', { headers }),
             fetch('/api/recommendations', { headers }),
             fetch('/api/my-applications', { headers }),
-            fetch('/api/campaigns', { headers }),
         ]);
 
         if (!meRes.ok) { window.location.href = '/login'; return; }
@@ -152,7 +141,6 @@
                     document.getElementById('score-arc').style.setProperty('--score', active.dataset.score);
                 }
                 if (scores.breakdown) _breakdown = scores.breakdown;
-                // Next Best Action 카드
                 if (scores.next_best_action) {
                     document.getElementById('nba-text').textContent = scores.next_best_action;
                     document.getElementById('nba-section').style.display = '';
@@ -162,18 +150,15 @@
 
         if (recRes.ok) {
             const data = await recRes.json();
-            // 신규 응답 호환: {meta, products}. 구 응답 (list) 도 호환.
             const products = Array.isArray(data) ? data : (data.products || []);
             const meta     = (data && !Array.isArray(data)) ? (data.meta || {}) : {};
 
-            // meta.next_best_action → NBA 카드 (dashboard 응답에 없을 때만 fallback)
             const nbaEl = document.getElementById('nba-text');
             if (meta.next_best_action && nbaEl && nbaEl.textContent === '-') {
                 nbaEl.textContent = meta.next_best_action;
                 document.getElementById('nba-section').style.display = '';
             }
 
-            // [Home 탭] 계열사 분리 X — 상위 6개 카드형 (rank + reason + score)
             const homeContainer = document.getElementById('home-rec-cats');
             homeContainer.innerHTML = '';
             const homeTop = products.slice(0, 10);
@@ -206,30 +191,6 @@
                     `).join('')}
                     </div>
                 `;
-            }
-
-            // [Recommend 탭] 상단: 등급별 캠페인 배너, 하단: 맞춤 추천 목록
-            const tabRec = document.getElementById('tab-recommend');
-            if (tabRec) {
-                const campaigns = campRes.ok ? await campRes.json() : [];
-                const campHtml = campaigns.length === 0 ? '' : `
-                    <div style="padding:14px 16px 6px;">
-                        <div style="font-size:13px;font-weight:700;color:#0f172a;margin-bottom:10px;">🎯 진행 중인 이벤트</div>
-                        <div style="display:flex;flex-direction:column;gap:8px;">
-                            ${campaigns.map(c => `
-                                <div style="background:linear-gradient(135deg,#6366f1 0%,#8b5cf6 100%);border-radius:12px;padding:14px 16px;color:#fff;">
-                                    <div style="font-size:16px;margin-bottom:4px;">${c.icon || '🎯'} ${c.title}</div>
-                                    <div style="font-size:12px;opacity:.85;margin-bottom:8px;">${c.desc}</div>
-                                    <div style="display:flex;justify-content:space-between;align-items:center;">
-                                        <span style="font-size:11px;opacity:.7;">${c.period}</span>
-                                        <span style="font-size:12px;font-weight:700;background:rgba(255,255,255,.2);padding:3px 10px;border-radius:999px;">${c.cta}</span>
-                                    </div>
-                                </div>
-                            `).join('')}
-                        </div>
-                    </div>
-                `;
-                tabRec.innerHTML = campHtml || '<div style="padding:24px;color:#94a3b8;text-align:center;">진행 중인 이벤트가 없습니다.</div>';
             }
         }
 
@@ -286,13 +247,6 @@
         if (e.target === this) closeHealthModal();
     });
 
-    function switchToRecommendTab() {
-        document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-        document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-        document.querySelector('.nav-btn[data-tab="recommend"]').classList.add('active');
-        document.getElementById('tab-recommend').classList.add('active');
-    }
-
     document.querySelectorAll('.nav-btn[data-tab]').forEach(btn => {
         btn.addEventListener('click', () => {
             document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
@@ -303,7 +257,6 @@
         });
     });
 
-    // session_id 일관 — 탭 단위로 sessionStorage 유지
     function getSessionId() {
         let sid = sessionStorage.getItem('ls_session_id');
         if (!sid) {
