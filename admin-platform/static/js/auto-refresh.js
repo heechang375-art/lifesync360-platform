@@ -48,11 +48,11 @@
     function stampNow(id) {
         var el = document.getElementById(id);
         if (!el) return;
-        var d = new Date();
-        var hh = String(d.getHours()).padStart(2, '0');
-        var mm = String(d.getMinutes()).padStart(2, '0');
-        var ss = String(d.getSeconds()).padStart(2, '0');
-        var next = '갱신: ' + hh + ':' + mm + ':' + ss;
+        var kst = new Date(new Date().getTime() + 9 * 60 * 60 * 1000);
+        var hh = String(kst.getUTCHours()).padStart(2, '0');
+        var mm = String(kst.getUTCMinutes()).padStart(2, '0');
+        var ss = String(kst.getUTCSeconds()).padStart(2, '0');
+        var next = '갱신: ' + hh + ':' + mm + ':' + ss + ' KST';
         if (el.textContent !== next) el.textContent = next;
     }
 

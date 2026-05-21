@@ -5,22 +5,67 @@ import random
 import threading
 import time
 from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import boto3
+
+_KST = timezone(timedelta(hours=9))
+
+def _kst(dt_val):
+    """Aurora UTC datetime → KST 문자열 (YYYY-MM-DD HH:MM)"""
+    if not dt_val:
+        return '-'
+    try:
+        dt = dt_val if hasattr(dt_val, 'year') else datetime.fromisoformat(str(dt_val))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(_KST).strftime('%Y-%m-%d %H:%M')
+    except Exception:
+        return str(dt_val)[:16]
 from flask import Flask, Response, render_template, request, redirect, url_for, session, jsonify, stream_with_context
 
 import wearable_engine
 
 
+def _bootstrap_dotenv():
+    """admin-platform/.env 또는 .env.local 가 있으면 os.environ 에 로드. AWS 호출 전에 실행."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    for fname in ('.env', '.env.local'):
+        path = os.path.join(here, fname)
+        if not os.path.exists(path):
+            continue
+        try:
+            with open(path, encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('#') or '=' not in line:
+                        continue
+                    k, v = line.split('=', 1)
+                    k, v = k.strip(), v.strip().strip('"').strip("'")
+                    if k and not os.environ.get(k):
+                        os.environ[k] = v
+        except Exception:
+            pass
+
+
+_bootstrap_dotenv()
+
+
 def _bootstrap_secrets():
-    """Secrets Manager /lifesync/dev/db/master → os.environ (미설정 항목만 주입)"""
+    """Secrets Manager /lifesync/dev/db/master + SSM Parameter Store → os.environ (미설정 항목만 주입)"""
     try:
         client = boto3.client('secretsmanager', region_name='ap-northeast-2')
         resp = client.get_secret_value(SecretId='/lifesync/dev/db/master')
         for k, v in json.loads(resp['SecretString']).items():
             if not os.environ.get(k):
                 os.environ[k] = str(v)
+    except Exception:
+        pass
+    try:
+        ssm = boto3.client('ssm', region_name='ap-northeast-2')
+        if not os.environ.get('GCP_PROJECT_ID'):
+            r = ssm.get_parameter(Name='/lifesync/gcp_project_id', WithDecryption=True)
+            os.environ['GCP_PROJECT_ID'] = r['Parameter']['Value']
     except Exception:
         pass
 
@@ -49,43 +94,16 @@ CONSENT_LABELS = {
     'WEARABLE':   '웨어러블',
 }
 
-from mock_data import (
-    MOCK_USERS, MOCK_SCORES,
-    MOCK_CONSENTS, MOCK_RECOMMEND_HISTORY, MOCK_IDENTITIES,
-    MOCK_CAMPAIGNS, MOCK_RECENT_RECOMMENDS,
-    MOCK_PRODUCT_FUNNEL,
-)
-
-# 신규 페이지에서 mock fallback 으로 사용
 from mockup_data import (
-    MOCKUP_KPI_TOP, MOCKUP_KPI_MID,
-    MOCKUP_AWS_STATUS_DETAIL, MOCKUP_GCP_STATUS_DETAIL,
-    MOCKUP_S3_INGESTION_BOX, MOCKUP_SIGNUP_BOX, MOCKUP_RECENT_UPLOADS,
-    MOCKUP_DOMAIN_FLOW,
-    MOCKUP_LAMBDA_METRICS, MOCKUP_GLUE_LAST_RUN, MOCKUP_NEXT_BATCH,
-    MOCKUP_RECOMMEND_BY_CATEGORY, MOCKUP_RECOMMEND_BY_GRADE, MOCKUP_RECOMMEND_TOP10,
-    MOCKUP_SCORE_DISTRIBUTION,
-    MOCKUP_AGE_MODEL_RATIO, MOCKUP_RECOMMEND_TREND,
-    MOCKUP_CLOUD_STATUS,
-    MOCKUP_AI_KPI, MOCKUP_VERTEX_AI, MOCKUP_FEATURE_IMPORTANCE,
-    MOCKUP_TGW, MOCKUP_VPN, MOCKUP_VPC_PEERING,
-    MOCKUP_WEARABLE_REALTIME,
-    MOCKUP_AFFILIATE_HEALTH, MOCKUP_BACKEND_SERVICES,
-    MOCKUP_REDIS_PERSONALIZED, MOCKUP_CROSSSELL_LIST, MOCKUP_RECENT_ERRORS,
-    MOCKUP_LOCAL_LAB,
-    # 화이트 샘플 UI 전용
+    MOCKUP_GCP_STATUS_DETAIL,
+    MOCKUP_AI_KPI,
+    MOCKUP_REDIS_PERSONALIZED,
     MOCKUP_DASH_KPI, MOCKUP_DASH_CLOUD3, MOCKUP_DASH_S3_5, MOCKUP_DASH_RECENT_UPLOADS,
-    MOCKUP_C360_DEFAULT_QUERY, MOCKUP_C360_PROFILE, MOCKUP_C360_STATUS,
-    MOCKUP_C360_CONSENT_BADGES, MOCKUP_C360_OWNED_BADGES,
-    MOCKUP_C360_TOPN, MOCKUP_C360_NBA, MOCKUP_C360_PRECISION,
-    MOCKUP_C360_RECENT_RECOMMEND, MOCKUP_C360_RECENT_ACTIVITY,
-    MOCKUP_AI_KPI4, MOCKUP_AI_CAT_DONUT, MOCKUP_AI_AGE_PERF, MOCKUP_AI_GRADE_DIST,
-    MOCKUP_AI_FEATURE_DIST, MOCKUP_AI_RECDATA, MOCKUP_AI_INSIGHT,
-    MOCKUP_AI_DDB_HISTOGRAM, MOCKUP_AI_PR_MODELS,
+    MOCKUP_AI_KPI4,
     MOCKUP_NET_TOPOLOGY,
     MOCKUP_NET_AWS_PLATFORM, MOCKUP_NET_AWS_DATA, MOCKUP_NET_AWS_GROUPVM,
     MOCKUP_NET_AWS_CONNECTIVITY, MOCKUP_NET_GCP, MOCKUP_NET_ONPREM,
-    MOCKUP_NET_WEARABLE, MOCKUP_NET_API_ENDPOINTS,
+    MOCKUP_NET_API_ENDPOINTS,
 )
 
 
@@ -986,7 +1004,7 @@ def _stub_redis_personalized(global_id):
 
 # ── analytics batch 결과 read 헬퍼 (P3 r10/r12/r13) ─────────────
 def _aurora_recommend_trend_7day():
-    """7일 추이 — customer_recommend_history GROUP BY DATE. V6 R10/R11."""
+    """7일 추이 — customer_recommend_history GROUP BY DATE, 최신 7일만. V6 R10/R11."""
     try:
         with get_db() as db, db.cursor() as cur:
             cur.execute(
@@ -997,14 +1015,22 @@ def _aurora_recommend_trend_7day():
                 "       ROUND(SUM(clicked_flag IN ('Y','1')) * 100.0 / COUNT(*), 2) AS ctr, "
                 "       ROUND(SUM(purchased_flag IN ('Y','1')) * 100.0 / COUNT(*), 2) AS cvr "
                 "FROM customer_recommend_history "
-                "WHERE recommended_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY) "
+                "WHERE recommended_at >= DATE_SUB(CURDATE(), INTERVAL 8 DAY) "
                 "GROUP BY DATE(recommended_at) "
-                "ORDER BY date"
+                "ORDER BY date DESC LIMIT 7"
             )
-            rows = cur.fetchall()
-        for r in rows:
-            r['date'] = r['date'].strftime('%m-%d') if r.get('date') else ''
-        return rows
+            rows = list(reversed(cur.fetchall()))
+        return [
+            {
+                'date':        r['date'].strftime('%m-%d') if r.get('date') else '',
+                'recommended': int(r.get('recommended') or 0),
+                'clicked':     int(r.get('clicked') or 0),
+                'purchased':   int(r.get('purchased') or 0),
+                'ctr':         float(r.get('ctr') or 0),
+                'cvr':         float(r.get('cvr') or 0),
+            }
+            for r in rows
+        ]
     except Exception:
         return []
 
@@ -1014,8 +1040,7 @@ def _aurora_recommend_top10():
     try:
         with get_db() as db, db.cursor() as cur:
             cur.execute(
-                "SELECT ROW_NUMBER() OVER(ORDER BY COUNT(*) DESC) AS rank, "
-                "       p.product_name AS product, "
+                "SELECT p.product_name AS product, "
                 "       cat.category_name AS category, "
                 "       COUNT(*) AS recommended, "
                 "       ROUND(SUM(r.clicked_flag IN ('Y','1')) * 100.0 / COUNT(*), 1) AS ctr, "
@@ -1027,24 +1052,144 @@ def _aurora_recommend_top10():
                 "GROUP BY p.product_id, p.product_name, cat.category_name "
                 "ORDER BY recommended DESC LIMIT 10"
             )
-            return cur.fetchall()
+            rows = cur.fetchall()
+        return [
+            {
+                'rank':        i + 1,
+                'product':     r['product'],
+                'category':    r['category'],
+                'recommended': int(r.get('recommended') or 0),
+                'ctr':         float(r.get('ctr') or 0),
+                'cvr':         float(r.get('cvr') or 0),
+            }
+            for i, r in enumerate(rows)
+        ]
     except Exception:
         return []
+
+
+def _ddb_grade_dist():
+    """DDB lifesync_customer_result.dynamic_grade 분포 (S~D 5단계)."""
+    try:
+        items = get_dynamo_table().scan(ProjectionExpression='dynamic_grade').get('Items', [])
+    except Exception:
+        return []
+    counts, total = {}, 0
+    for it in items:
+        g = it.get('dynamic_grade') or ''
+        if not g:
+            continue
+        counts[g] = counts.get(g, 0) + 1
+        total += 1
+    if not total:
+        return []
+    color_map = {'S': '#dc2626', 'A': '#f59e0b', 'B': '#3b82f6', 'C': '#16a34a', 'D': '#94a3b8'}
+    return [
+        {'grade': g, 'count': c,
+         'color': color_map.get(g, '#94a3b8'),
+         'pct':   round(c * 100.0 / total, 1)}
+        for g, c in sorted(counts.items())
+    ]
+
+
+def _aurora_action_code_rec_data():
+    """action_code별 추천 수 — 최근 7일."""
+    try:
+        with get_db() as db, db.cursor() as cur:
+            cur.execute(
+                "SELECT action_code AS name, COUNT(*) AS count "
+                "FROM customer_recommend_history "
+                "WHERE recommended_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY) "
+                "GROUP BY action_code ORDER BY count DESC LIMIT 8"
+            )
+            return [{'name': r['name'] or '-', 'count': int(r['count'] or 0)} for r in cur.fetchall()]
+    except Exception:
+        return []
+
+
+def _aurora_pr_models():
+    """ml_model_evaluation_daily 최신 모델별 Precision/Recall."""
+    try:
+        with get_db() as db, db.cursor() as cur:
+            cur.execute(
+                "SELECT model_name AS name, "
+                "       ROUND(precision_score * 100, 1) AS `precision`, "
+                "       ROUND(recall_score    * 100, 1) AS recall "
+                "FROM ml_model_evaluation_daily "
+                "ORDER BY eval_date DESC LIMIT 4"
+            )
+            return [
+                {'name': r['name'], 'precision': float(r['precision'] or 0), 'recall': float(r['recall'] or 0)}
+                for r in cur.fetchall()
+            ]
+    except Exception:
+        return []
+
+
+def _ddb_score_histogram_for_ai():
+    """AI 예측 출현 분포 — dynamic_score 5-bucket 히스토그램 (chart histogram 용)."""
+    try:
+        items = get_dynamo_table().scan(ProjectionExpression='dynamic_score').get('Items', [])
+    except Exception:
+        return []
+    buckets = [('0-20', '#ef4444'), ('20-40', '#f59e0b'), ('40-60', '#facc15'),
+               ('60-80', '#3b82f6'), ('80-100', '#16a34a')]
+    counts = [0, 0, 0, 0, 0]
+    for it in items:
+        try:
+            v = float(it.get('dynamic_score') or 0)
+        except Exception:
+            continue
+        idx = 4 if v >= 80 else 3 if v >= 60 else 2 if v >= 40 else 1 if v >= 20 else 0
+        counts[idx] += 1
+    return [{'bucket': b, 'count': c, 'color': col} for (b, col), c in zip(buckets, counts) if c]
 
 
 def _ddb_query_today(table_name, sk_prefix=None, sk_attr='segment_key'):
-    """analytics_* DDB 테이블 오늘 snapshot_date 조회. sk_prefix 있으면 begins_with."""
-    from datetime import date as _date
+    """analytics_* DDB 테이블 오늘 snapshot_date 조회. 오늘 데이터 없으면 최근 3일까지 fallback."""
+    from datetime import date as _date, timedelta as _td
     from boto3.dynamodb.conditions import Key
-    today = _date.today().isoformat()
+    ddb_table = boto3.resource('dynamodb', region_name=AWS_REGION).Table(table_name)
+    for delta in range(3):
+        d = (_date.today() - _td(days=delta)).isoformat()
+        try:
+            kw = {'KeyConditionExpression': Key('snapshot_date').eq(d)}
+            if sk_prefix:
+                kw['KeyConditionExpression'] &= Key(sk_attr).begins_with(sk_prefix)
+            result = ddb_table.query(**kw).get('Items', [])
+            if result:
+                return result
+        except Exception:
+            continue
+    return []
+
+
+def _aurora_customer_insight():
+    """고객 인사이트 분석 — Aurora customer_recommend_history 7일 집계."""
     try:
-        table = boto3.resource('dynamodb', region_name=AWS_REGION).Table(table_name)
-        kw = {'KeyConditionExpression': Key('snapshot_date').eq(today)}
-        if sk_prefix:
-            kw['KeyConditionExpression'] &= Key(sk_attr).begins_with(sk_prefix)
-        return table.query(**kw).get('Items', [])
+        with get_db() as db, db.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(DISTINCT global_id) AS active_customers, "
+                "       ROUND(SUM(clicked_flag IN ('Y','1')) * 100.0 / COUNT(*), 1) AS avg_ctr, "
+                "       ROUND(SUM(purchased_flag IN ('Y','1')) * 100.0 / COUNT(*), 1) AS avg_cvr, "
+                "       COUNT(*) AS total_rec "
+                "FROM customer_recommend_history "
+                "WHERE recommended_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)"
+            )
+            row = cur.fetchone() or {}
+        if not row or not row.get('total_rec'):
+            return {'source': 'Aurora · customer_recommend_history', 'rows': []}
+        return {
+            'source': 'Aurora · customer_recommend_history (최근 7일)',
+            'rows': [
+                {'label': '활성 고객', 'value': f"{int(row['active_customers'] or 0):,}명", 'sub': '추천 기록 보유'},
+                {'label': '평균 CTR', 'value': f"{float(row['avg_ctr'] or 0):.1f}%", 'sub': '추천 클릭률'},
+                {'label': '평균 CVR', 'value': f"{float(row['avg_cvr'] or 0):.1f}%", 'sub': '구매 전환율'},
+                {'label': '총 추천', 'value': f"{int(row['total_rec'] or 0):,}건", 'sub': '7일 누적'},
+            ],
+        }
     except Exception:
-        return []
+        return {'source': '-', 'rows': []}
 
 
 # ── Auth ──────────────────────────────────────────────
@@ -1110,7 +1255,24 @@ def dashboard():
 @app.route('/users')
 @login_required
 def users():
-    q = request.args.get('q', '').strip() or MOCKUP_C360_DEFAULT_QUERY
+    q = request.args.get('q', '').strip()
+
+    # q 없으면 빈 검색창만 표시
+    if not q:
+        return render_template('users.html', active='customer', q='',
+                               profile=None, consent_gate=None)
+
+    # 이름 검색: G로 시작하지 않고 2자 이상이면 onprem 이름 검색
+    if not q.startswith('G'):
+        r = _call_onprem('search_by_name', q=q)
+        hits = (r or {}).get('results', [])
+        if len(hits) == 1:
+            from flask import redirect as _redir
+            return _redir(f'/users?q={hits[0]["global_id"]}')
+        return render_template('users.html', active='customer', q=q,
+                               name_search_results=hits,
+                               profile=None, consent_gate=None)
+
     # consent gate 먼저 확인 후 profile/pii 조회
     domain_label = {'BANK':'은행','CARD':'카드','INS':'보험','HLT':'헬스케어',
                     'HOS':'병원','WBL':'웨어러블','SEC':'증권','ONINS':'온라인보험'}
@@ -1199,15 +1361,163 @@ def users():
     except Exception:
         pass
 
+    # ③ Redis TOP-N
+    topn = []
+    try:
+        personalized = _stub_redis_personalized(q)
+        if personalized and personalized.get('top'):
+            pids = [int(p['product_id']) for p in personalized['top']]
+            _db = get_db()
+            try:
+                with _db.cursor() as _cur:
+                    _ph = ','.join(['%s'] * len(pids))
+                    _cur.execute(f'SELECT product_id, product_name FROM product_master WHERE product_id IN ({_ph})', pids)
+                    _pm = {r['product_id']: r['product_name'] for r in _cur.fetchall()}
+            finally:
+                _db.close()
+            for i, p in enumerate(personalized['top']):
+                pid = int(p['product_id'])
+                topn.append({'rank': i + 1, 'product': _pm.get(pid, f'상품 {pid}'), 'score': f"{float(p['score']):.2f}"})
+    except Exception:
+        pass
+
+    # ④ 교차판매 (cross_sell_rule)
+    crosssell = []
+    try:
+        _db = get_db()
+        try:
+            with _db.cursor() as _cur:
+                _cur.execute(
+                    'SELECT r.target_category, '
+                    '(SELECT p.product_name FROM product_master p '
+                    ' JOIN category_master c2 ON p.category_id = c2.category_id '
+                    ' WHERE c2.category_code = r.target_category AND p.active_flag = "Y" '
+                    ' ORDER BY p.priority_rank ASC LIMIT 1) AS product_name, '
+                    '(SELECT c3.category_name FROM category_master c3 WHERE c3.category_code = r.target_category LIMIT 1) AS category_name '
+                    'FROM cross_sell_rule r WHERE r.active_flag = "Y" ORDER BY r.priority_rank ASC LIMIT 3'
+                )
+                for row in _cur.fetchall():
+                    if row['product_name']:
+                        crosssell.append({'product': row['product_name'], 'category': row['target_category'],
+                                          'reason': f'{row["category_name"] or row["target_category"]} 교차 추천 룰'})
+        finally:
+            _db.close()
+    except Exception:
+        pass
+
+    # ⑤ DynamoDB 점수·등급
+    _scores = None
+    try:
+        from boto3.dynamodb.conditions import Key as _Key2
+        _items = get_dynamo_table().query(
+            KeyConditionExpression=_Key2('global_id').eq(q),
+            ScanIndexForward=False, Limit=1
+        ).get('Items', [])
+        _scores = _items[0] if _items else None
+    except Exception:
+        pass
+
+    _grade = (_scores or {}).get('dynamic_grade', 'C')
+    _dyn_score = float((_scores or {}).get('dynamic_score', 50))
+    _vip_prob = float((_scores or {}).get('vip_prob', 0))
+    _rec_prob = float((_scores or {}).get('rec_prob', 0))
+    _signup_prob = float((_scores or {}).get('signup_prob', 0))
+    _nba_action_map = {
+        'S': 'VIP 전용 프리미엄 자산관리 서비스 가입 권유',
+        'A': '우수 고객 혜택 패키지 안내',
+        'B': '중장기 재테크 상품 추천',
+        'C': '기본 저축 상품 및 혜택 안내',
+        'D': '고객 니즈 파악 상담 진행',
+    }
+    nba = {
+        'action': _nba_action_map.get(_grade, '-'),
+        'targets': [
+            {'label': 'VIP 전환 확률', 'state': f'{_vip_prob:.0%}'},
+            {'label': '추천 반응 확률', 'state': f'{_rec_prob:.0%}'},
+            {'label': '가입 확률', 'state': f'{_signup_prob:.0%}'},
+        ] if _scores else [],
+        'response_prob': min(int(_rec_prob * 100), 99),
+        'updated_at': str((_scores or {}).get('update_time', '-'))[:16],
+    }
+    precision = []
+    if _scores:
+        precision = [
+            {'label': 'AI 점수', 'value': f"{_dyn_score:.0f}", 'color': '#6366f1'},
+            {'label': 'AI 등급', 'value': _grade, 'color': '#f59e0b'},
+            {'label': 'VIP 확률', 'value': f'{_vip_prob:.0%}', 'color': '#14b8a6'},
+        ]
+
+    # ⑥ 최근 추천 활동 (Aurora customer_recommend_history)
+    recent_recommend = []
+    try:
+        _db = get_db()
+        try:
+            with _db.cursor() as _cur:
+                _cur.execute(
+                    'SELECT p.product_name, h.recommended_at, h.clicked_flag, h.purchased_flag '
+                    'FROM customer_recommend_history h '
+                    'JOIN product_master p ON h.product_id = p.product_id '
+                    'WHERE h.global_id = %s ORDER BY h.recommended_at DESC LIMIT 5',
+                    (q,)
+                )
+                for row in _cur.fetchall():
+                    if row['purchased_flag'] == 'Y':
+                        state, bg, color = '구매', '#dcfce7', '#16a34a'
+                    elif row['clicked_flag'] == 'Y':
+                        state, bg, color = '클릭', '#dbeafe', '#1d4ed8'
+                    else:
+                        state, bg, color = '노출', '#f1f5f9', '#64748b'
+                    recent_recommend.append({
+                        'time': _kst(row['recommended_at']),
+                        'product': row['product_name'],
+                        'state': state, 'badge_bg': bg, 'badge_color': color,
+                    })
+        finally:
+            _db.close()
+    except Exception:
+        pass
+
+    # ⑦ 최근 행동 로그 (Aurora customer_dashboard_log)
+    recent_activity = []
+    try:
+        _db = get_db()
+        try:
+            with _db.cursor() as _cur:
+                _cur.execute(
+                    'SELECT l.view_time, l.page_type, l.banner_click, l.product_click, p.product_name '
+                    'FROM customer_dashboard_log l '
+                    'LEFT JOIN product_master p ON l.click_product_id = p.product_id '
+                    'WHERE l.global_id = %s ORDER BY l.view_time DESC LIMIT 5',
+                    (q,)
+                )
+                for row in _cur.fetchall():
+                    if row['product_click'] == 'Y' and row['product_name']:
+                        event = f"{row['product_name']} 클릭"
+                        badge, bg, color = '상품클릭', '#dbeafe', '#1d4ed8'
+                    elif row['banner_click'] == 'Y':
+                        event = f"배너 클릭 ({row['page_type']})"
+                        badge, bg, color = '배너클릭', '#fef9c3', '#ca8a04'
+                    else:
+                        event = f"{row['page_type']} 페이지 방문"
+                        badge, bg, color = '방문', '#f1f5f9', '#64748b'
+                    recent_activity.append({
+                        'time': _kst(row['view_time']),
+                        'event': event,
+                        'badge': badge, 'badge_bg': bg, 'badge_color': color,
+                    })
+        finally:
+            _db.close()
+    except Exception:
+        pass
+
     return render_template('users.html',
         active='customer', q=q,
         consent_gate='ok',
         profile=profile, status_rows=status_rows,
         consent_badges=consent_badges, owned_badges=owned_badges,
-        topn=[], crosssell=[],
-        nba={'action': '-', 'targets': [], 'response_prob': 0, 'updated_at': '-'},
-        precision=[],
-        recent_recommend=[], recent_activity=[],
+        topn=topn, crosssell=crosssell,
+        nba=nba, precision=precision,
+        recent_recommend=recent_recommend, recent_activity=recent_activity,
     )
 
 
@@ -1215,9 +1525,16 @@ def users():
 @app.route('/users/<global_id>')
 @login_required
 def user_detail(global_id):
-    # ① DynamoDB — 등급·점수
-    result = get_dynamo_table().get_item(Key={'global_id': global_id})
-    scores = result.get('Item')
+    # ① DynamoDB — 등급·점수 (SK=update_time 있으므로 query 사용)
+    try:
+        from boto3.dynamodb.conditions import Key as _Key
+        items = get_dynamo_table().query(
+            KeyConditionExpression=_Key('global_id').eq(global_id),
+            ScanIndexForward=False, Limit=1
+        ).get('Items', [])
+        scores = items[0] if items else None
+    except Exception:
+        scores = None
 
     # ② S3 동의 스냅샷 (consent_snapshot_aggregator 가 매일 KST 03:00 적재)
     consents = _load_consent_from_s3(global_id).get('consents', [])
@@ -1281,9 +1598,12 @@ def ai():
         top10=_aurora_recommend_top10(),
         cat_donut=_aurora_category_ctr_donut(),
         age_perf=[],
-        grade_dist=[], feature_dist=[],
-        rec_data=[],   insight={'source': '-', 'rows': []},
-        ddb_hist=[],   pr_models=[],
+        grade_dist=_ddb_grade_dist(),
+        feature_dist=_ddb_feature_importance(),
+        rec_data=_aurora_action_code_rec_data(),
+        insight=_aurora_customer_insight(),
+        ddb_hist=_ddb_score_histogram_for_ai(),
+        pr_models=_aurora_pr_models(),
     )
 
 
@@ -1625,15 +1945,32 @@ def _ai_kpi4_from_aws():
     # 안 들어오는 항목은 '-' 로 비워둠
     cards = [dict(c, value='-', sub='-') for c in MOCKUP_AI_KPI4]
     try:
-        metrics = _ping_lambda_metrics() or []
-        rec    = next((m for m in metrics if 'recommendation' in m['fn']), None)
-        ingest = next((m for m in metrics if 'ingest' in m['fn']),         None)
-        if rec:
-            cards[0]['value'] = f'{rec["invocations_1h"]:,}'
-            cards[0]['sub']   = 'lifesync-recommendation-engine · 최근 1h'
-        if ingest:
-            cards[1]['value'] = f'{ingest["invocations_1h"]:,}'
-            cards[1]['sub']   = 'lifesync-ingest · 최근 1h'
+        with get_db() as _db, _db.cursor() as _cur:
+            _cur.execute('SELECT ctr, cvr, date FROM customer_recommend_daily ORDER BY date DESC LIMIT 1')
+            _row = _cur.fetchone()
+            if _row:
+                cards[0]['value'] = f"{float(_row['ctr'] or 0):.1f}%"
+                cards[0]['sub']   = f"lifesync-recommendation-engine · {_row['date']}"
+                cards[1]['value'] = f"{float(_row['cvr'] or 0):.1f}%"
+                cards[1]['sub']   = f"lifesync-ingest · {_row['date']}"
+    except Exception:
+        pass
+    try:
+        import boto3 as _boto3
+        _ddb = _boto3.resource('dynamodb', region_name=AWS_REGION)
+        _tbl = _ddb.Table('lifesync_customer_result')
+        _resp = _tbl.scan(
+            ProjectionExpression='vip_prob, rec_prob, signup_prob',
+            Limit=200,
+        )
+        _items = _resp.get('Items', [])
+        if _items:
+            _avg = lambda k: sum(float(i.get(k, 0) or 0) for i in _items) / len(_items)
+            _score_avg = round((_avg('vip_prob') + _avg('rec_prob') + _avg('signup_prob')) / 3, 2)
+            cards[2]['value'] = str(_score_avg)
+            cards[2]['sub'] = 'vip_prob / rec_prob / signup_prob 평균'
+            cards[3]['value'] = f'{len(_items):,}'
+            cards[3]['sub'] = 'DynamoDB lifesync_customer_result · 분석 대상'
     except Exception:
         pass
     return cards
@@ -1661,6 +1998,7 @@ def api_ai_chart_trend():
 
 def _aurora_category_ctr_donut():
     """카테고리별 추천/클릭/CTR — recent 7d. V6 R19."""
+    _colors = ['#6366f1', '#22d3ee', '#f59e0b', '#10b981', '#e11d48', '#8b5cf6', '#f97316', '#14b8a6']
     try:
         with get_db() as db, db.cursor() as cur:
             cur.execute(
@@ -1676,7 +2014,17 @@ def _aurora_category_ctr_donut():
                 "ORDER BY recommended DESC "
                 "LIMIT 10"
             )
-            return cur.fetchall()
+            rows = cur.fetchall()
+        total = sum(int(r['recommended'] or 0) for r in rows)
+        return [
+            {
+                'name': r['label'],
+                'pct': round(int(r['recommended'] or 0) * 100.0 / total, 1) if total > 0 else 0,
+                'ctr': float(r['ctr'] or 0),
+                'color': _colors[i % len(_colors)],
+            }
+            for i, r in enumerate(rows)
+        ]
     except Exception:
         return []
 
@@ -1690,41 +2038,81 @@ def api_ai_chart_donut():
 
 
 def _ai_age_perf_2step():
-    """연령대별 추천 성과 — On-Prem age_band → Aurora history 2-step. V6 R20."""
+    """연령대별 추천 성과 — On-Prem 2-step, DDB analytics_segment fallback. V6 R20."""
     try:
         result = _call_onprem('list_by_age_band') or {}
         age_groups = result.get('age_groups', {})
-        if not age_groups:
+        if age_groups and all(age_groups.get(b) for b in ['20s', '30s', '40s', '50s', '60s+']):
+            out = []
+            with get_db() as db, db.cursor() as cur:
+                for age_band in ['20s', '30s', '40s', '50s', '60s+']:
+                    gids = age_groups.get(age_band, [])
+                    if not gids:
+                        out.append({'age_band': age_band, 'recommended': 0,
+                                    'clicked': 0, 'purchased': 0, 'ctr': 0, 'cvr': 0})
+                        continue
+                    placeholders = ','.join(['%s'] * len(gids))
+                    cur.execute(
+                        f"SELECT COUNT(*) AS recommended, "
+                        f"       SUM(clicked_flag IN ('Y','1')) AS clicked, "
+                        f"       SUM(purchased_flag IN ('Y','1')) AS purchased "
+                        f"FROM customer_recommend_history "
+                        f"WHERE global_id IN ({placeholders}) "
+                        f"  AND recommended_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)",
+                        tuple(gids)
+                    )
+                    row = cur.fetchone() or {}
+                    rec = int(row.get('recommended') or 0)
+                    clk = int(row.get('clicked') or 0)
+                    pur = int(row.get('purchased') or 0)
+                    out.append({
+                        'age_band': age_band, 'recommended': rec, 'clicked': clk, 'purchased': pur,
+                        'ctr': round(clk * 100.0 / rec, 1) if rec else 0,
+                        'cvr': round(pur * 100.0 / clk, 1) if clk else 0,
+                    })
+            return out
+    except Exception:
+        pass
+    # On-Prem 미연결 → DDB analytics_segment_performance age_band 데이터로 대체
+    try:
+        rows = _ddb_query_today(DDB_SEGMENT_TABLE, sk_prefix='age_band#')
+        if not rows:
             return []
+        order = ['20s', '30s', '40s', '50s', '60s+']
         out = []
-        with get_db() as db, db.cursor() as cur:
-            for age_band in ['20s', '30s', '40s', '50s', '60s+']:
-                gids = age_groups.get(age_band, [])
-                if not gids:
-                    out.append({'age_band': age_band, 'recommended': 0,
-                                'clicked': 0, 'purchased': 0, 'ctr': 0, 'cvr': 0})
-                    continue
-                placeholders = ','.join(['%s'] * len(gids))
-                cur.execute(
-                    f"SELECT COUNT(*) AS recommended, "
-                    f"       SUM(clicked_flag IN ('Y','1')) AS clicked, "
-                    f"       SUM(purchased_flag IN ('Y','1')) AS purchased "
-                    f"FROM customer_recommend_history "
-                    f"WHERE global_id IN ({placeholders}) "
-                    f"  AND recommended_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)",
-                    tuple(gids)
-                )
-                row = cur.fetchone() or {}
-                rec = row.get('recommended', 0) or 0
-                clk = row.get('clicked', 0) or 0
-                pur = row.get('purchased', 0) or 0
-                out.append({
-                    'age_band': age_band,
-                    'recommended': rec, 'clicked': clk, 'purchased': pur,
-                    'ctr': round(clk * 100.0 / rec, 1) if rec else 0,
-                    'cvr': round(pur * 100.0 / clk, 1) if clk else 0,
-                })
+        for row in sorted(rows, key=lambda r: order.index(r.get('value', '20s')) if r.get('value') in order else 99):
+            out.append({
+                'age_band':    str(row.get('value', '-')),
+                'recommended': int(row.get('recommended') or 0),
+                'clicked':     int(row.get('clicked') or 0),
+                'purchased':   int(row.get('purchased') or 0),
+                'ctr':         float(row.get('ctr') or 0),
+                'cvr':         float(row.get('cvr') or 0),
+            })
         return out
+    except Exception:
+        return []
+
+
+def _ddb_feature_importance():
+    """DDB vip_prob/rec_prob/signup_prob 평균 → feature importance 프록시."""
+    try:
+        items = get_dynamo_table().scan(
+            ProjectionExpression='vip_prob, rec_prob, signup_prob'
+        ).get('Items', [])
+        if not items:
+            return []
+        fields = [
+            ('vip_prob',    'VIP 전환 확률'),
+            ('rec_prob',    '추천 반응 확률'),
+            ('signup_prob', '가입 전환 확률'),
+        ]
+        results = []
+        for key, label in fields:
+            vals = [float(i[key]) for i in items if i.get(key) is not None]
+            if vals:
+                results.append({'name': label, 'pct': round(sum(vals) / len(vals), 3)})
+        return sorted(results, key=lambda x: -x['pct'])
     except Exception:
         return []
 
@@ -1733,7 +2121,8 @@ def _ai_age_perf_2step():
 @login_required
 def api_ai_chart_age():
     """연령대별 추천 성과 진행바."""
-    age = _ai_age_perf_2step()
+    raw = _ai_age_perf_2step()
+    age = [{'age': r.get('age_band', '-'), 'ctr': r.get('ctr', 0), 'cvr': r.get('cvr', 0)} for r in raw]
     return render_template('_chart_ai_age.j2', age_perf=age)
 
 
@@ -1785,36 +2174,6 @@ def stream_wearable():
         'X-Accel-Buffering': 'no',   # Nginx 버퍼링 비활성
     })
 
-
-def _profile_full_mock(global_id):
-    """P2 r44 시연 응답 — 운영 `_call_onprem('get_all')` 와 동일 구조 (시연↔운영 통일).
-
-    구조: {global_id, customer: {customer_status, vip_grade, first_created_dt,
-                                  identities: [...], profile: {lifesync_score, health_score, ...}},
-           consents: [...]}
-    """
-    user  = next((u for u in MOCK_USERS if u.get('global_id') == global_id), None) or {}
-    score = MOCK_SCORES.get(global_id, {}) or {}
-    return {
-        'global_id': global_id,
-        'customer': {
-            'customer_status':  'ACTIVE',
-            'vip_grade':        user.get('grade', 'BASIC'),
-            'customer_type':    'INDIVIDUAL',
-            'first_created_dt': '2023-01-15T10:00:00',
-            'last_updated_dt':  score.get('update_time', '2026-05-15T14:25:00'),
-            'identities':       MOCK_IDENTITIES.get(global_id, []),
-            'profile': {
-                'lifesync_score': float(score.get('dynamic_score', 0) or 0),
-                'health_score':   float(score.get('health_score', 0)   or 0),
-                'finance_score':  float(score.get('finance_score', 0)  or 0),
-                'asset_score':    float(score.get('asset_score', 75.0) or 75.0),
-                'risk_score':     float(score.get('risk_score', 12.0)  or 12.0),
-                'last_calc_dt':   score.get('update_time', ''),
-            },
-        },
-        'consents': MOCK_CONSENTS.get(global_id, []),
-    }
 
 
 @app.route('/api/customer/profile/<global_id>')
@@ -1952,6 +2311,26 @@ def api_kinesis_status():
 def api_emr_status():
     """P4 r13. EMR Cluster 목록 + 상태."""
     return jsonify(_ping_emr())
+
+
+@app.route('/api/datavpc/status')
+@login_required
+def api_datavpc_status():
+    """DataVPC 4개 컴포넌트 통합 상태 — S3 / Kinesis / Glue / EMR."""
+    raw_bucket = os.environ.get('LIFESYNC_RAW_S3_BUCKET', 'lifesync-354-raw')
+    try:
+        _boto('s3').head_bucket(Bucket=raw_bucket)
+        s3_state = 'EXISTS'
+    except Exception:
+        s3_state = 'NOT_FOUND'
+    emr_list = _ping_emr()
+    return jsonify({
+        's3_bucket': raw_bucket,
+        's3_state':  s3_state,
+        'kinesis':   _ping_kinesis(),
+        'glue':      _ping_glue_last_run(),
+        'emr':       emr_list[0] if emr_list else {},
+    })
 
 
 @app.route('/api/admin/applications')

@@ -7,7 +7,7 @@ $env:PYTHONIOENCODING = 'utf-8'
 Get-Process python -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 2
 
-Start-Process -FilePath 'C:\Program Files\Python311\python.exe' `
+Start-Process -FilePath 'C:\Python311\python.exe' `
   -ArgumentList 'C:\admin-platform\app.py' `
   -WorkingDirectory 'C:\admin-platform' `
   -RedirectStandardOutput 'C:\admin-platform\stdout.log' `

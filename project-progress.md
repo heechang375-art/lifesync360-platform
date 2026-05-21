@@ -2153,3 +2153,105 @@ IaC 재배포 후 admin USE_MOCK=false 단계별 API 검증 체크리스트:
   2. 23 stack 정식 배포 (analytics_aggregator Lambda + EventBridge) — Step 3 정식
   3. GCP 측 셋업 (담당자 의존) — Step 1 cloud/status + Step 2 vertex_metrics
   4. Lambda VPC config + On-Prem 연결 — Step 4 정식
+
+---
+
+## 라운드 — 2026-05-20 admin 실 클라우드 전환 (USE_MOCK=false 시연)
+
+### 배경
+24-admin-windows-ec2 위 admin app 을 실 AWS 데이터로 시연. 사용자 요청: mock 다 빼고 실 데이터, wearable 1s + 폴링 30s, 첫 진입 시 mock 안 보이고 즉시 갱신.
+
+### 인프라 변경 (✅)
+
+| 항목 | 내용 |
+|---|---|
+| Lambda VPC config | `lifesync-onprem-customer-query` 가 management VPC subnet-05ee715cfbb583854 매핑 + AWSLambdaVPCAccessExecutionRole + 신규 SG (outbound 80/443/8000-8080). TGW → VPN → 172.16.1.73 경로 OK |
+| Lambda urlopen timeout | `handler.py:_api_get/_api_post` 8 → 25 — count_master_customer (91만건 COUNT) 시간 흡수 |
+| VPN tunnel | 한쪽 UP (13.125.17.139), 한쪽 DOWN (52.78.117.43) — 운영 정상 |
+| admin EC2 SG inbound | Aurora 3306 + Redis 6379 + VPC endpoint 443 매핑 |
+| admin EC2 IAM | ReadOnlyAccess + Lambda invoke (lifesync-*) + S3 PutObject (admin-screens/admin-patch) + CloudWatch |
+| EC2 machine env | USE_MOCK=false, ONPREM_QUERY_LAMBDA, AURORA_HOST, DB_USER/PASS/NAME, DYNAMO_TABLE, LIFESYNC_RAW_S3_BUCKET, GLUE_JOB_PHYSICAL_NAME, PYTHONIOENCODING=utf-8 |
+
+### admin 코드 변경 (✅, S3 push + EC2 sync 까지 완료)
+
+| 파일 | 변경 |
+|---|---|
+| `app.py:116` | boto3 Config `connect_timeout=3, read_timeout=20` (2/3 → 3/20) |
+| `app.py:179` `_ping_cloud_status` | S3 list_buckets → **lifesync prefix 필터링** (14 → 6 buckets) |
+| `app.py:218` `_ping_s3_ingestion` | paginator 전체 순회 → **도메인 prefix 8개 × MaxKeys=1000 + CloudWatch NumberOfObjects metric** (timeout 해소) |
+| `app.py:504` `_ping_vpn` | bgp_asn XML 누수 → **describe_customer_gateways 별도 호출 + State='deleted' 제외** |
+| `app.py:1018` `dashboard()` | **USE_MOCK 분기 추가** — SSR 단 mock 안 보이게 `value='-' state='-' note='-'` 초기화 |
+| `app.py:1227` `_stub_aurora_summary` | KPI 1~3 _call_onprem count_* 채움 + KPI 9 DDB scan update_time |
+| `app.py:1371` `_cloud3_from_aws` | AWS 6 서비스 details 배열 + **On-Prem VM 단위 통합** (ls-db (MySQL) / ls-token (Tokenization) / ls-api (PrivateAPI) 3 row, ip:port 중복 제거) |
+| `app.py:1419` `_uploads_from_s3` | paginator → **도메인 prefix × MaxKeys=50** |
+| `wearable_engine.py` | `start_loop(interval=1.0)` (3 → 1) |
+| `templates/dashboard.html` | cloud-details div + JS apply replace, 폴링 30000ms (60→30) |
+| `templates/ops.html` | 인프라 토폴로지 섹션 제거, 폴링 30000ms |
+| `templates/users.html` | 검색 input `placeholder="G000000924" maxlength="10" pattern="[GC][0-9]{9}"` + hint 갱신 |
+| `static/css/admin.css` | `.cloud-details`, `.cloud-detail-{up,down,warn,err}` 추가 |
+
+### admin 코드 변경 (⏳, S3 push 완료 but EC2 sync 안 됨)
+
+| 파일 | 변경 |
+|---|---|
+| `app.py:1031` `users()` route | onprem `get_profile` + `get_pii` + `get_consent` 합산 → template 호환 키 (grade/phone_masked/gender/age_band/region/income/asset/ai_total_score/ai_health_score/status_rows/owned_badges/consent_badges) 통일. 현재 EC2 의 app.py 는 이전 변경 (cloud3 VM merge + S3 lifesync filter) 까지만 반영 — SSM Read-S3Object + Start-Process 의 stream hang 으로 cancel 됨 |
+
+### 검증 결과 (✅)
+
+| KPI/Endpoint | 값 / 응답 시간 |
+|---|---|
+| KPI 1 통합 고객 수 | **919,502** (master_customer) |
+| KPI 2 플랫폼 가입자 | **294,277** (users) |
+| KPI 3 분석 대상 | **58,624** (users JOIN consent) |
+| Cloud3 AWS | 6/6 정상 (Aurora/DDB/ElastiCache/ECS/ALB/S3 6 buckets) |
+| Cloud3 On-Prem | 2/3 정상 (ls-db UP / ls-token DOWN [의도] / ls-api UP) |
+| /api/dashboard/uploads | 717ms (이전 timeout) |
+| /api/s3/status | 765ms — 157,755 / 275 / 1,000 |
+| /api/network/vpn | 482ms — bgp_asn=65000, peer=1.231.165.73, UP/DOWN |
+| /api/admin/local-lab-status | 3.2s — mysql pass(11 tables), tokenization fail |
+
+### 미반영 / 별도 작업 필요
+
+| 항목 | 원인 | 조치 |
+|---|---|---|
+| **users() route EC2 sync** | SSM Read-S3Object hang 으로 download 안 됨 — S3 만 최신 | SSM 명령 분리 (download 단독 → restart 단독) 후 재시도 |
+| **동의 고객만 검색 차단** (사용자 추가 요청) | users() route 에 분석 동의 여부 게이트 미구현 | get_consent 응답 확인 후 미동의 시 profile dict 비공개 + status_rows '미동의' 표시 |
+| KPI 4 AI 추천 상태 | DDB `lifesync_customer_result.update_time` 미적재 | analytics_aggregator Lambda 배포 |
+| KPI 5~8 추천이력/CTR/CVR | Aurora `customer_recommend_history` / `customer_dashboard_log` 미적재 | 23-analytics-batch stack 배포 + 백필 |
+| KPI 9 Redis Cache 수 | `REDIS_HOST` env 누락 | ElastiCache `lif-re-1sqfju15n8thy` endpoint 확인 + env 추가 |
+| /api/admin/recommend-trend / segment-performance | Aurora customer_recommend_daily / DDB analytics_segment_daily 미배포 | 23-analytics-batch stack |
+| /api/kinesis/status | **Kinesis stream 자체 미배포** (account 354 list-streams 빈) | 21-kinesis stack 배포 |
+| /api/vm/group | EC2 `Project=lifesync` tag 부착 인스턴스 없음 | EC2 tagging 또는 group-app VM 배포 |
+| GCP 자격증명 부재 | cloud3 GCP 카드 '-' | 별도 GCP 셋업 작업 |
+
+### 트러블슈팅 메모
+
+- **SSM Run Command sub-process 가 machine env 못 받음**: machine env 설정해도 SSM script 의 새 process 는 system env snapshot 못 reload. 해결 — `$env:NAME='value'` 를 SSM script 안에서 명시 설정 후 Start-Process (child 가 부모 env 상속)
+- **SSM `[System.Diagnostics.Process]::Start` + RedirectStandardOutput=$true hang**: reader 없어 stdout buffer 막힘. 해결 — `Start-Process -RedirectStandardOutput <file>` 옵션 (file 로 redirect)
+- **SSM Read-S3Object + Start-Process 한 줄 hang**: 원인 미상, command timeout. 해결 — download 단독 SSM 명령 → 검증 → restart 단독 SSM 명령 (분리)
+- **Lambda urlopen timeout=8s 짧음**: master_customer COUNT(*) 91만건이 8s 초과. urlopen 25s + admin boto3 read_timeout 20s 로 매칭
+- **`_call_onprem` 의 `ONPREM_QUERY_LAMBDA` env**: app.py 는 `ONPREM_QUERY_LAMBDA` (`ONPREM_LAMBDA_NAME` 아님). 빈 string 이면 `_call_onprem` 이 `{}` 반환 → mock fallback. 환경변수 이름 매칭 주의
+- **VPN tunnel 양쪽 DOWN 시 Lambda 호출 실패**: AWS console VPN 상태 확인 + onprem strongSwan/IPsec service restart. 한쪽만 UP 이어도 routing OK
+- **AWS CLI cp949 encoding 에러**: `PYTHONIOENCODING=utf-8` 환경변수 + boto3 직접 호출 우회
+- **S3 lifesync-raw paginator 30s+**: 157,755 객체 paginator 전체 순회 시간 초과 → 도메인 prefix MaxKeys=1000 합산 + CloudWatch NumberOfObjects metric 활용
+
+### 다음 세션 재개 흐름
+
+1. SSM 으로 S3 → EC2 app.py download 강제 적용 (단독 명령으로)
+   ```bash
+   aws ssm send-command --region ap-northeast-2 --instance-ids i-09857764d0822ba3c \
+     --document-name AWS-RunPowerShellScript \
+     --parameters 'commands=["Read-S3Object -BucketName lifesync-artifact-bucket -Key admin-patch/app.py -File C:\\admin-platform\\app.py -Region ap-northeast-2 | Out-Null; (Get-Item C:\\admin-platform\\app.py).Length; (Select-String C:\\admin-platform\\app.py -Pattern domain_label,phone_masked,get_pii | Measure-Object).Count"]'
+   ```
+   결과: size > 76506 + matches > 0 — OK
+
+2. admin restart (별도 SSM 명령)
+   ```bash
+   aws ssm send-command --region ap-northeast-2 --instance-ids i-09857764d0822ba3c \
+     --document-name AWS-RunPowerShellScript \
+     --parameters 'commands=["$env:USE_MOCK=\"false\"; $env:ONPREM_QUERY_LAMBDA=\"lifesync-onprem-customer-query\"; ... ; Get-Process python -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep 2; Start-Process -WindowStyle Hidden -FilePath C:\\Python311\\python.exe -ArgumentList C:\\admin-platform\\app.py -WorkingDirectory C:\\admin-platform -RedirectStandardOutput C:\\admin-platform\\admin.log -RedirectStandardError C:\\admin-platform\\admin.err"]'
+   ```
+
+3. 동의 고객만 검색 차단 로직 추가 후 push + sync
+4. REDIS_HOST env 추가 (KPI 9)
+5. 23-analytics-batch / 21-kinesis stack 배포 (KPI 4~8 / Kinesis)

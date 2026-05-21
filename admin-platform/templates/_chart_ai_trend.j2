@@ -1,25 +1,27 @@
 {# 7일 추이 — 막대 (추천 수) + 선 (CTR/CVR). trend_7d 받음. 빈 list 면 안내 표시. #}
 {% if trend_7d %}
-{% set max_r = trend_7d|map(attribute='recommended')|max %}
-<svg viewBox="0 0 600 220" style="width:100%; height:220px;">
+{% set max_r   = (trend_7d|map(attribute='recommended')|max) or 1 %}
+{% set max_ctr = ([trend_7d|map(attribute='ctr')|max, 10]|max) %}
+{% set max_cvr = ([trend_7d|map(attribute='cvr')|max, 10]|max) %}
+{% set bw = 60 %}
+{% set gap = 18 %}
+<svg viewBox="0 0 640 220" style="width:100%; height:220px;">
     {% for y in [40, 90, 140, 190] %}
-    <line x1="40" x2="590" y1="{{ y }}" y2="{{ y }}" stroke="#f1f5f9" stroke-width="1"/>
+    <line x1="40" x2="630" y1="{{ y }}" y2="{{ y }}" stroke="#f1f5f9" stroke-width="1"/>
     {% endfor %}
-    {% set bw = 60 %}
-    {% set gap = 18 %}
     {% for d in trend_7d %}
     {% set x = 50 + loop.index0 * (bw + gap) %}
-    {% set h = (d.recommended / max_r * 150) | round(0, 'floor') | int if max_r else 0 %}
+    {% set h = (d.recommended / max_r * 150) | round(0, 'floor') | int %}
     <rect x="{{ x }}" y="{{ 195 - h }}" width="{{ bw }}" height="{{ h }}" fill="#dbeafe" rx="3"/>
-    <text x="{{ x + bw / 2 }}" y="210" text-anchor="middle" font-size="10" fill="#94a3b8">{{ d.date }}</text>
+    <text x="{{ x + bw / 2 }}" y="213" text-anchor="middle" font-size="10" fill="#94a3b8">{{ d.date }}</text>
     {% endfor %}
     <polyline fill="none" stroke="#3b82f6" stroke-width="2"
-        points="{% for d in trend_7d %}{{ 50 + loop.index0 * (bw + gap) + bw/2 }},{{ 195 - (d.ctr / 30 * 150) | round(0,'floor') | int }} {% endfor %}"/>
+        points="{% for d in trend_7d %}{{ 50 + loop.index0 * (bw + gap) + bw/2 }},{{ [195 - (d.ctr / max_ctr * 150) | round(0,'floor') | int, 15] | max }} {% endfor %}"/>
     <polyline fill="none" stroke="#f59e0b" stroke-width="2"
-        points="{% for d in trend_7d %}{{ 50 + loop.index0 * (bw + gap) + bw/2 }},{{ 195 - (d.cvr / 30 * 150) | round(0,'floor') | int }} {% endfor %}"/>
+        points="{% for d in trend_7d %}{{ 50 + loop.index0 * (bw + gap) + bw/2 }},{{ [195 - (d.cvr / max_cvr * 150) | round(0,'floor') | int, 15] | max }} {% endfor %}"/>
     {% for d in trend_7d %}
-    <circle cx="{{ 50 + loop.index0 * (bw + gap) + bw/2 }}" cy="{{ 195 - (d.ctr / 30 * 150) | round(0,'floor') | int }}" r="3" fill="#3b82f6"/>
-    <circle cx="{{ 50 + loop.index0 * (bw + gap) + bw/2 }}" cy="{{ 195 - (d.cvr / 30 * 150) | round(0,'floor') | int }}" r="3" fill="#f59e0b"/>
+    <circle cx="{{ 50 + loop.index0 * (bw + gap) + bw/2 }}" cy="{{ [195 - (d.ctr / max_ctr * 150) | round(0,'floor') | int, 15] | max }}" r="3" fill="#3b82f6"/>
+    <circle cx="{{ 50 + loop.index0 * (bw + gap) + bw/2 }}" cy="{{ [195 - (d.cvr / max_cvr * 150) | round(0,'floor') | int, 15] | max }}" r="3" fill="#f59e0b"/>
     {% endfor %}
 </svg>
 <div style="display:flex; gap:14px; justify-content:center; font-size:11px; color:#64748b; margin-top:4px;">

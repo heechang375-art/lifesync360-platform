@@ -256,19 +256,27 @@ window.addEventListener('DOMContentLoaded', function () {
                     AutoRefresh.stampNow('ts-ops-conn');
                 },
             },
-            // Data VPC: Kinesis 단일 상태 — 기존 4행 중 Kinesis 행만 갱신 어려워 카드 통째 재구성
+            // Data VPC: S3 / Kinesis / Glue / EMR 통합 상태
             {
-                url: '/api/kinesis/status',
+                url: '/api/datavpc/status',
                 apply: function (data) {
-                    if (!data || !data.StreamDescription) return;
-                    var sd = data.StreamDescription;
+                    if (!data) return;
+                    var kin  = data.kinesis || {};
+                    var glue = data.glue    || {};
+                    var emr  = data.emr     || {};
                     var rows = [
-                        {name: 'S3 Raw Bucket', sub: 'lifesync-raw',     state: '',         state_color: ''},
-                        {name: 'Kinesis Stream', sub: sd.StreamName || '-',
-                         state: sd.StreamStatus || '-',
-                         state_color: sd.StreamStatus === 'ACTIVE' ? '#16a34a' : '#dc2626'},
-                        {name: 'Glue ETL',  sub: 'lifesync-etl',  state: '', state_color: ''},
-                        {name: 'EMR',       sub: 'on-demand',     state: '', state_color: ''},
+                        {name: 'S3 Raw Bucket',  sub: data.s3_bucket  || 'lifesync-raw',
+                         state: data.s3_state || '-',
+                         state_color: data.s3_state === 'EXISTS' ? '#16a34a' : '#dc2626'},
+                        {name: 'Kinesis Stream', sub: kin.stream_name || '-',
+                         state: kin.status || '-',
+                         state_color: kin.status === 'ACTIVE' ? '#16a34a' : '#dc2626'},
+                        {name: 'Glue ETL',       sub: glue.job_name   || 'lifesync-etl',
+                         state: glue.state || 'NO_RUNS',
+                         state_color: glue.state === 'SUCCEEDED' ? '#16a34a' : glue.state ? '#f59e0b' : '#94a3b8'},
+                        {name: 'EMR',            sub: emr.name        || 'on-demand',
+                         state: emr.state || 'NONE',
+                         state_color: (emr.state === 'RUNNING' || emr.state === 'WAITING') ? '#16a34a' : emr.state ? '#f59e0b' : '#94a3b8'},
                     ];
                     AutoRefresh.replaceTbody('ops-rows-dt', vpcRowsHtml(rows));
                     AutoRefresh.stampNow('ts-ops-vpc');

@@ -5,13 +5,44 @@
 <!-- 검색바 -->
 <section class="section">
     <form class="search-bar" method="get" action="{{ url_for('users') }}">
-        <input class="form-input" type="text" name="q" value="{{ q }}" placeholder="G000000924" maxlength="10" pattern="[GC][0-9]{9}" title="G 또는 C + 9자리 숫자">
+        <input class="form-input" type="text" name="q" value="{{ q }}" placeholder="G000000001 또는 고객 이름" maxlength="30" title="G + 9자리 또는 이름 (예: 김철수)">
         <button class="btn btn-primary" type="submit">검색</button>
-        <span class="search-hint">G + 9자리 (예: G000000924) — On-Prem master_customer 919,502명 검색</span>
+        <span class="search-hint">G + 9자리 ID 또는 고객 이름 — On-Prem master_customer 검색</span>
     </form>
 </section>
 
-{% if consent_gate != 'ok' %}
+{% if name_search_results is defined %}
+<section class="section">
+    <div class="card">
+        <div class="card-title" style="margin-bottom:12px;">이름 검색 결과: <strong>{{ q }}</strong> — {{ name_search_results|length }}건</div>
+        {% if name_search_results %}
+        <table style="width:100%; border-collapse:collapse; font-size:13px;">
+            <thead>
+                <tr style="border-bottom:2px solid #e2e8f0; color:#64748b;">
+                    <th style="padding:8px 12px; text-align:left;">Global ID</th>
+                    <th style="padding:8px 12px; text-align:left;">이름</th>
+                    <th style="padding:8px 12px;"></th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for hit in name_search_results %}
+            <tr style="border-bottom:1px solid #f1f5f9;">
+                <td style="padding:8px 12px; font-family:monospace; color:#3b82f6;">{{ hit.global_id }}</td>
+                <td style="padding:8px 12px; font-weight:600;">{{ hit.name }}</td>
+                <td style="padding:8px 12px;">
+                    <a href="{{ url_for('users') }}?q={{ hit.global_id }}" class="btn btn-primary" style="font-size:11px; padding:4px 10px;">조회</a>
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div style="color:#94a3b8; padding:16px 0;">검색 결과 없음</div>
+        {% endif %}
+    </div>
+</section>
+
+{% elif consent_gate != 'ok' %}
 <section class="section">
     <div class="card" style="border-left:4px solid #f59e0b; background:#fffbeb;">
         {% if consent_gate == 'not_registered' %}
