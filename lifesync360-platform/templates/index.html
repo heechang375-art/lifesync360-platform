@@ -174,7 +174,7 @@
             // [Home 탭] 계열사 분리 X — 상위 6개 카드형 (rank + reason + score)
             const homeContainer = document.getElementById('home-rec-cats');
             homeContainer.innerHTML = '';
-            const homeTop = products.slice(0, 6);
+            const homeTop = products.slice(0, 10);
             if (homeTop.length === 0) {
                 homeContainer.innerHTML = '<div style="padding:14px;color:#94a3b8;font-size:13px;text-align:center;">추천 상품이 준비되는 중이에요</div>';
             } else {

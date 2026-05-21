@@ -144,15 +144,25 @@
         if (!meRes.ok) { window.location.href = '/login'; return; }
         const user = await meRes.json();
 
+        const _grade = user.grade || 'BASIC';
         document.querySelectorAll('.ladder-btn').forEach(btn => {
-            if (btn.dataset.grade === user.grade) btn.classList.add('current-grade');
+            if (btn.dataset.grade === _grade) btn.classList.add('current-grade');
         });
-        selectGrade(user.grade);
+        selectGrade(_grade);
 
-        const saved = JSON.parse(localStorage.getItem('ls_consents') || '[]');
-        document.querySelectorAll('#view-consent input[type=checkbox]').forEach(el => {
-            el.checked = saved.length === 0 || saved.includes(el.name);
-        });
+        const serverConsents = (user.consents || [])
+            .filter(c => c.consent_flag === 'Y' && !c.revoke_dt)
+            .map(c => c.domain);
+        if (serverConsents.length > 0) {
+            document.querySelectorAll('#view-consent input[type=checkbox]').forEach(el => {
+                el.checked = serverConsents.includes(el.name);
+            });
+        } else {
+            const saved = JSON.parse(localStorage.getItem('ls_consents') || '[]');
+            document.querySelectorAll('#view-consent input[type=checkbox]').forEach(el => {
+                el.checked = saved.length === 0 || saved.includes(el.name);
+            });
+        }
     })();
 
     document.querySelectorAll('.ladder-btn').forEach(btn => {

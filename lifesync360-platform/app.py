@@ -666,6 +666,8 @@ def api_recommendations(payload):
     finally:
         db.close()
 
+    products = products[:10]
+
     if not cached_ids and products:
         try:
             get_redis().setex(
