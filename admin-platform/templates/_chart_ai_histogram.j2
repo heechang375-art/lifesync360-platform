@@ -1,0 +1,17 @@
+{# AI 예측 출현 분포 히스토그램 — ddb_hist: [{bucket, count, color}, ...]. 빈 list 면 안내 #}
+{% if ddb_hist %}
+{% set hist_max = ddb_hist|map(attribute='count')|max %}
+<svg viewBox="0 0 400 180" style="width:100%; height:180px;">
+    {% set hbw = 42 %}
+    {% set hgap = 8 %}
+    {% for h in ddb_hist %}
+    {% set x = 20 + loop.index0 * (hbw + hgap) %}
+    {% set hh = (h.count / hist_max * 130) | round(0,'floor') | int if hist_max else 0 %}
+    <rect x="{{ x }}" y="{{ 150 - hh }}" width="{{ hbw }}" height="{{ hh }}" fill="{{ h.color }}" rx="3"/>
+    <text x="{{ x + hbw/2 }}" y="170" text-anchor="middle" font-size="9" fill="#94a3b8">{{ h.bucket }}</text>
+    {% endfor %}
+</svg>
+<div style="font-size:10px; color:#94a3b8; text-align:center;">dynamic_score 히스토그램</div>
+{% else %}
+<div style="height:180px; display:flex; align-items:center; justify-content:center; color:#cbd5e1; font-size:12px; border:1px dashed #e5e7eb; border-radius:6px;">데이터 없음</div>
+{% endif %}

@@ -9,13 +9,13 @@ MOCK_USERS = [
 ]
 
 MOCK_SCORES = {
-    'G001': {'dynamic_score': '92.4', 'health_score': '88', 'fin_score': '85', 'behavior_score': '76',
+    'G001': {'dynamic_score': '92.4', 'health_score': '88', 'finance_score': '85', 'asset_score': '95.0', 'risk_score': '10.0', 'behavior_score': '76',
              'dynamic_grade': 'VIP',    'next_best_action': 'VIP 종합 건강검진 예약을 권장합니다',  'vip_prob': '0.94', 'signup_prob': '0.81', 'rec_prob': '0.77', 'update_time': '2026-05-04T14:30:00'},
-    'G002': {'dynamic_score': '75.2', 'health_score': '72', 'fin_score': '80', 'behavior_score': '68',
+    'G002': {'dynamic_score': '75.2', 'health_score': '72', 'finance_score': '80', 'asset_score': '78.0', 'risk_score': '22.0', 'behavior_score': '68',
              'dynamic_grade': 'GOLD',   'next_best_action': '자유적금 플러스 가입을 권장합니다',    'vip_prob': '0.45', 'signup_prob': '0.62', 'rec_prob': '0.55', 'update_time': '2026-05-04T13:20:00'},
-    'G003': {'dynamic_score': '61.8', 'health_score': '58', 'fin_score': '65', 'behavior_score': '55',
+    'G003': {'dynamic_score': '61.8', 'health_score': '58', 'finance_score': '65', 'asset_score': '60.0', 'risk_score': '35.0', 'behavior_score': '55',
              'dynamic_grade': 'SILVER', 'next_best_action': '걷기 챌린지 참여를 권장합니다',        'vip_prob': '0.12', 'signup_prob': '0.34', 'rec_prob': '0.28', 'update_time': '2026-05-03T10:00:00'},
-    'G006': {'dynamic_score': '78.1', 'health_score': '80', 'fin_score': '74', 'behavior_score': '70',
+    'G006': {'dynamic_score': '78.1', 'health_score': '80', 'finance_score': '74', 'asset_score': '82.0', 'risk_score': '18.0', 'behavior_score': '70',
              'dynamic_grade': 'GOLD',   'next_best_action': '건강지킴이 보험 가입을 권장합니다',    'vip_prob': '0.38', 'signup_prob': '0.58', 'rec_prob': '0.49', 'update_time': '2026-05-04T09:10:00'},
 }
 

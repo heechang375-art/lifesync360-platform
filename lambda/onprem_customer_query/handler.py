@@ -39,7 +39,7 @@ PRIVATE_API_URL = os.environ['PRIVATE_API_URL']   # http://172.16.1.73
 
 
 def _api_get(path):
-    with urllib.request.urlopen(f'{PRIVATE_API_URL}{path}', timeout=8) as resp:
+    with urllib.request.urlopen(f'{PRIVATE_API_URL}{path}', timeout=25) as resp:
         return json.loads(resp.read())
 
 
@@ -51,7 +51,7 @@ def _api_post(path, payload):
         headers={'Content-Type': 'application/json'},
         method='POST',
     )
-    with urllib.request.urlopen(req, timeout=8) as resp:
+    with urllib.request.urlopen(req, timeout=25) as resp:
         return json.loads(resp.read())
 
 
