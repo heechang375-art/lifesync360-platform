@@ -34,8 +34,8 @@ USE_MOCK             = os.environ.get('USE_MOCK', 'true').lower() != 'false'  # 
 ADMIN_USER           = os.environ.get('ADMIN_USER', 'admin')
 ADMIN_PASS           = os.environ.get('ADMIN_PASSWORD', 'admin123')
 DYNAMO_TABLE         = os.environ.get('DYNAMO_TABLE', 'lifesync_customer_result')
-DDB_SEGMENT_TABLE    = os.environ.get('DDB_SEGMENT_TABLE',    'analytics_segment_daily')
-DDB_DEMOGRAPHIC_TABLE= os.environ.get('DDB_DEMOGRAPHIC_TABLE','analytics_demographic_daily')
+DDB_SEGMENT_TABLE    = os.environ.get('DDB_SEGMENT_TABLE',    'analytics_segment_performance')
+DDB_DEMOGRAPHIC_TABLE= os.environ.get('DDB_DEMOGRAPHIC_TABLE','analytics_demographic_information')
 AWS_REGION           = os.environ.get('AWS_REGION', 'ap-northeast-2')
 ONPREM_QUERY_LAMBDA  = os.environ.get('ONPREM_QUERY_LAMBDA', '')
 
@@ -1005,7 +1005,7 @@ def _aurora_recommend_trend_7day():
         return []
 
 
-def _ddb_query_today(table_name, sk_prefix=None):
+def _ddb_query_today(table_name, sk_prefix=None, sk_attr='segment_key'):
     """analytics_* DDB 테이블 오늘 snapshot_date 조회. sk_prefix 있으면 begins_with."""
     from datetime import date as _date
     from boto3.dynamodb.conditions import Key
@@ -1014,7 +1014,7 @@ def _ddb_query_today(table_name, sk_prefix=None):
         table = boto3.resource('dynamodb', region_name=AWS_REGION).Table(table_name)
         kw = {'KeyConditionExpression': Key('snapshot_date').eq(today)}
         if sk_prefix:
-            kw['KeyConditionExpression'] &= Key('segment_key').begins_with(sk_prefix)
+            kw['KeyConditionExpression'] &= Key(sk_attr).begins_with(sk_prefix)
         return table.query(**kw).get('Items', [])
     except Exception:
         return []
@@ -1330,7 +1330,7 @@ def api_admin_demographic_summary():
     """P3 r13. analytics_demographic_daily 오늘자 — dim prefix 필터 가능."""
     dim = request.args.get('dim')
     prefix = f'{dim}#' if dim else None
-    rows = _ddb_query_today(DDB_DEMOGRAPHIC_TABLE, sk_prefix=prefix)
+    rows = _ddb_query_today(DDB_DEMOGRAPHIC_TABLE, sk_prefix=prefix, sk_attr='demographic_key')
     return jsonify(rows)
 
 
