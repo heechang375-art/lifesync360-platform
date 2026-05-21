@@ -29,6 +29,8 @@
 </div>
 
 <script>
+    if (localStorage.getItem('ls_token')) { window.location.replace('/'); }
+
     document.getElementById('login-btn').addEventListener('click', async () => {
         const email = document.getElementById('email').value;
         const password = document.getElementById('password').value;
