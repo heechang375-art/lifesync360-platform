@@ -2032,19 +2032,18 @@ def api_admin_applications():
             )
             total = cur.fetchone()['cnt']
 
-            # Service-DB v3 — customer_product_application 9컬럼 슬림 스키마
             cur.execute(
                 "SELECT a.application_id, a.global_id, a.ls_user_id, "
                 "       p.product_code, p.product_name, "
                 "       c.company_name, cat.category_name, "
                 "       a.status, a.reviewer_id, a.reviewed_at, "
-                "       a.created_at, a.updated_at "
+                "       a.applied_at AS created_at, a.updated_at "
                 "FROM customer_product_application a "
                 "LEFT JOIN product_master  p   ON a.product_id  = p.product_id "
                 "LEFT JOIN company_master  c   ON p.company_id  = c.company_id "
                 "LEFT JOIN category_master cat ON p.category_id = cat.category_id "
                 f"WHERE {where_sql} "
-                "ORDER BY a.created_at DESC LIMIT %s OFFSET %s",
+                "ORDER BY a.applied_at DESC LIMIT %s OFFSET %s",
                 tuple(args) + (limit, offset),
             )
             rows = []
