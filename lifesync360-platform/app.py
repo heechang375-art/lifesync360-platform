@@ -3,6 +3,7 @@ import datetime
 import hashlib
 import uuid
 import json as _json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timezone
 from functools import wraps
 import jwt
@@ -278,39 +279,44 @@ def api_me(payload):
     # Mock 유저 fallback 준비 (Lambda 미배포 검증용)
     _mock_user = next((u for u in MOCK_USERS.values() if u['ls_user_id'] == payload['sub']), None)
 
-    login_email = None
-    global_id   = payload['gid']
-    try:
-        user = _call_onprem('get_user', ls_user_id=payload['sub'])
-        login_email = user.get('login_email')
-        global_id   = user.get('global_id', global_id)
-    except Exception:
-        if _mock_user:
-            login_email = _mock_user.get('email')
+    global_id = payload['gid']
 
-    grade = None
-    try:
-        item  = _ddb_get_latest(global_id)
-        grade = item.get('dynamic_grade')
-    except Exception:
-        pass
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        fut_user = pool.submit(_call_onprem, 'get_user', ls_user_id=payload['sub'])
+        fut_all  = pool.submit(_call_onprem, 'get_all',  global_id=global_id)
+        fut_pii  = pool.submit(_call_onprem, 'get_pii',  global_id=global_id)
+        fut_ddb  = pool.submit(_ddb_get_latest, global_id)
 
-    onprem = None
-    try:
-        onprem = _call_onprem('get_all', global_id=global_id)
-    except Exception:
-        pass
+        login_email = None
+        try:
+            user = fut_user.result()
+            login_email = user.get('login_email')
+            global_id   = user.get('global_id', global_id)
+        except Exception:
+            if _mock_user:
+                login_email = _mock_user.get('email')
+
+        grade = None
+        try:
+            grade = fut_ddb.result().get('dynamic_grade')
+        except Exception:
+            pass
+
+        onprem = None
+        try:
+            onprem = fut_all.result()
+        except Exception:
+            pass
+
+        name = None
+        try:
+            name = fut_pii.result().get('name')
+        except Exception:
+            if _mock_user:
+                name = _mock_user.get('name')
 
     consents = onprem.get('consents', []) if onprem else []
     profile  = ((onprem or {}).get('customer') or {}).get('profile') or {}
-
-    name = None
-    try:
-        pii  = _call_onprem('get_pii', global_id=global_id)
-        name = pii.get('name')
-    except Exception:
-        if _mock_user:
-            name = _mock_user.get('name')
 
     return jsonify({
         'ls_user_id': payload['sub'],
@@ -702,13 +708,14 @@ def api_my_applications(payload):
         with db.cursor() as cur:
             cur.execute(
                 "SELECT a.application_id, p.product_code, p.product_name, "
-                "       c.company_name, cat.category_name, a.status, a.created_at "
+                "       c.company_name, cat.category_name, a.status, "
+                "       NULL AS created_at "
                 "FROM customer_product_application a "
                 "LEFT JOIN product_master  p   ON a.product_id  = p.product_id "
                 "LEFT JOIN company_master  c   ON p.company_id  = c.company_id "
                 "LEFT JOIN category_master cat ON p.category_id = cat.category_id "
                 "WHERE a.global_id = %s "
-                "ORDER BY a.created_at DESC LIMIT 50",
+                "ORDER BY a.application_id DESC LIMIT 50",
                 (payload['gid'],),
             )
             rows = []
