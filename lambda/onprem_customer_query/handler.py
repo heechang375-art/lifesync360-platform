@@ -116,6 +116,11 @@ def handler(event, context):
                 'email':    body['email'],
                 'password': body['password'],
             })
+        elif action == 'set_password':
+            result = _api_post('/internal/auth/set-password', {
+                'email':        body['email'],
+                'new_password': body['new_password'],
+            })
         elif action == 'register':
             # rrn (주민번호) 운영 미수집 — body 에 들어와도 PrivateAPI 로 전달하지 않음
             result = _api_post('/internal/auth/register', {

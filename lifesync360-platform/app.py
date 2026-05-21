@@ -236,16 +236,28 @@ def api_register():
 
 @app.route('/api/login', methods=['POST'])
 def api_login():
-    # 임시: Lambda 미배포 검증용 — 인증만 Mock 강제
     data     = request.get_json() or {}
     email    = data.get('email', '')
     password = data.get('password', '')
 
-    user = MOCK_USERS.get(email)
-    if not user or hashlib.sha256(password.encode('utf-8')).hexdigest() != user['password_hash']:
+    if USE_MOCK:
+        user = MOCK_USERS.get(email)
+        if not user or hashlib.sha256(password.encode('utf-8')).hexdigest() != user['password_hash']:
+            return jsonify({'error': '이메일 또는 비밀번호가 올바르지 않습니다.'}), 401
+        token = make_jwt(user['ls_user_id'], user['global_id'])
+        return jsonify({'token': token, 'ls_user_id': user['ls_user_id']})
+
+    try:
+        result = _call_onprem('login', email=email, password=password)
+    except Exception as e:
+        app.logger.error('login lambda 호출 실패: %s', e)
+        return jsonify({'error': '인증 서비스에 연결할 수 없습니다.'}), 503
+
+    if result.get('detail') or 'ls_user_id' not in result:
         return jsonify({'error': '이메일 또는 비밀번호가 올바르지 않습니다.'}), 401
-    token = make_jwt(user['ls_user_id'], user['global_id'])
-    return jsonify({'token': token, 'ls_user_id': user['ls_user_id']})
+
+    token = make_jwt(result['ls_user_id'], result['global_id'])
+    return jsonify({'token': token, 'ls_user_id': result['ls_user_id']})
 
 
 @app.route('/api/me')

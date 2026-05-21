@@ -317,6 +317,28 @@ def auth_login(req: LoginRequest):
     }
 
 
+class SetPasswordRequest(BaseModel):
+    email: str
+    new_password: str
+
+@app.post('/internal/auth/set-password')
+def auth_set_password(req: SetPasswordRequest):
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            cur.execute(
+                'UPDATE users SET password_hash = %s WHERE login_email = %s',
+                (hash_password(req.new_password), req.email)
+            )
+            affected = cur.rowcount
+            db.commit()
+    finally:
+        db.close()
+    if affected == 0:
+        raise HTTPException(status_code=404, detail='사용자 없음')
+    return {'status': 'ok', 'email': req.email}
+
+
 class RegisterRequest(BaseModel):
     ls_user_id:    str
     global_id:     str
