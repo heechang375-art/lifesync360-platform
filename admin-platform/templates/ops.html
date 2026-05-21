@@ -200,6 +200,23 @@ window.addEventListener('DOMContentLoaded', function () {
                     renderConn();
                 },
             },
+            // Platform VPC: admin EC2 + ECS
+            {
+                url: '/api/vm/platform',
+                apply: function (data) {
+                    if (!Array.isArray(data)) return;
+                    var rows = data.map(function (i) {
+                        var st = (i.state || '').toLowerCase();
+                        var color = st === 'running' ? '#16a34a' : (st === 'stopped' ? '#dc2626' : '#94a3b8');
+                        var cpu = i.cpu_pct != null ? 'CPU ' + i.cpu_pct + '%' : '';
+                        var mem = i.mem_pct != null ? ' · MEM ' + i.mem_pct + '%' : '';
+                        var sub = (i.vm_id || '-') + (cpu ? ' · ' + cpu + mem : '');
+                        return { name: i.name || i.vm_id || '-', sub: sub, state: i.state || '-', state_color: color };
+                    });
+                    AutoRefresh.replaceTbody('ops-rows-pf', vpcRowsHtml(rows));
+                    AutoRefresh.stampNow('ts-ops-vpc');
+                },
+            },
             // GroupVM: EC2 7개 list
             {
                 url: '/api/vm/group',
@@ -208,9 +225,12 @@ window.addEventListener('DOMContentLoaded', function () {
                     var rows = data.map(function (i) {
                         var st = (i.state || '').toLowerCase();
                         var color = st === 'running' ? '#16a34a' : (st === 'stopped' ? '#dc2626' : '#94a3b8');
+                        var cpu = i.cpu_pct != null ? 'CPU ' + i.cpu_pct + '%' : '';
+                        var mem = i.mem_pct != null ? ' · MEM ' + i.mem_pct + '%' : '';
+                        var sub = (i.vm_id || '-') + (cpu ? ' · ' + cpu + mem : '');
                         return {
-                            name:        i.name || i.instance_id || '-',
-                            sub:         (i.instance_id || '-') + ' · ' + (i.private_ip || ''),
+                            name:        i.name || i.vm_id || '-',
+                            sub:         sub,
                             state:       i.state || '-',
                             state_color: color,
                         };
