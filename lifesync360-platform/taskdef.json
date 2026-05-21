@@ -29,6 +29,22 @@
         {
           "name": "JWT_SECRET",
           "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:ecs-jwt-signing-hDXOQc:jwt::"
+        },
+        {
+          "name": "DB_USER",
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:/lifesync/dev/db/master-S8ZoCX:DB_USER::"
+        },
+        {
+          "name": "DB_PASS",
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:/lifesync/dev/db/master-S8ZoCX:DB_PASS::"
+        },
+        {
+          "name": "AURORA_HOST",
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:/lifesync/dev/db/master-S8ZoCX:AURORA_HOST::"
+        },
+        {
+          "name": "REDIS_HOST",
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:/lifesync/dev/db/master-S8ZoCX:REDIS_HOST::"
         }
       ],
       "logConfiguration": {
