@@ -536,16 +536,10 @@ def _match_rules(cur, grade, dynamic_score, health_score, vip_required_flag, tar
     return cat_list, rule_action_by_cat
 
 
-def _fetch_products(cur, cached_ids, cat_list, dynamic_score, grade, consented_domains=None):
-    """3 모드: cache hit → id 조회 / category 매칭 → top2*N / fallback → score 기반 LIMIT 20.
-    consented_domains 가 주어지면 동의한 계열사 상품만 반환."""
-    domain_filter    = consented_domains or []
-    has_domain_filter = bool(domain_filter)
-    domain_ph        = ', '.join(['%s'] * len(domain_filter)) if has_domain_filter else ''
-
+def _fetch_products(cur, cached_ids, cat_list, dynamic_score, grade):
+    """3 모드: cache hit → id 조회 / category 매칭 → top2*N / fallback → score 기반 LIMIT 20."""
     if cached_ids:
         placeholders = ', '.join(['%s'] * len(cached_ids))
-        domain_clause = f'AND c.company_code IN ({domain_ph})' if has_domain_filter else ''
         cur.execute(f"""
             SELECT p.product_id, p.product_code, p.product_name, p.description,
                    p.target_grade, p.risk_level, p.priority_rank,
@@ -554,15 +548,13 @@ def _fetch_products(cur, cached_ids, cat_list, dynamic_score, grade, consented_d
             JOIN company_master   c   ON p.company_id  = c.company_id
             JOIN category_master  cat ON p.category_id = cat.category_id
             WHERE p.product_id IN ({placeholders}) AND p.active_flag = 'Y'
-              {domain_clause}
             ORDER BY p.priority_rank
-        """, cached_ids + domain_filter)
+        """, cached_ids)
         return cur.fetchall()
 
     products = []
     if cat_list:
         cat_placeholders = ', '.join(['%s'] * len(cat_list))
-        domain_clause = f'AND c.company_code IN ({domain_ph})' if has_domain_filter else ''
         cur.execute(f"""
             SELECT p.product_id, p.product_code, p.product_name, p.description,
                    p.target_grade, p.risk_level, p.priority_rank,
@@ -574,9 +566,8 @@ def _fetch_products(cur, cached_ids, cat_list, dynamic_score, grade, consented_d
             WHERE p.active_flag = 'Y'
               AND cat.category_code IN ({cat_placeholders})
               AND p.min_score <= %s
-              {domain_clause}
             ORDER BY FIELD(cat.category_code, {cat_placeholders}), p.priority_rank
-        """, cat_list + [dynamic_score] + cat_list + domain_filter)
+        """, cat_list + [dynamic_score] + cat_list)
         for r in cur.fetchall():
             if r['rn'] <= 2:
                 r.pop('rn', None)
@@ -586,8 +577,7 @@ def _fetch_products(cur, cached_ids, cat_list, dynamic_score, grade, consented_d
 
     if not products:
         min_score = GRADE_SCORE_MAP.get(grade, 60)
-        domain_clause = f'AND c.company_code IN ({domain_ph})' if has_domain_filter else ''
-        cur.execute(f"""
+        cur.execute("""
             SELECT p.product_id, p.product_code, p.product_name, p.description,
                    p.target_grade, p.risk_level, p.priority_rank,
                    c.company_code, c.company_name, cat.category_code, cat.category_name
@@ -595,9 +585,8 @@ def _fetch_products(cur, cached_ids, cat_list, dynamic_score, grade, consented_d
             JOIN company_master   c   ON p.company_id  = c.company_id
             JOIN category_master  cat ON p.category_id = cat.category_id
             WHERE p.active_flag = 'Y' AND p.min_score <= %s
-              {domain_clause}
             ORDER BY p.priority_rank LIMIT 20
-        """, [min_score] + domain_filter)
+        """, (min_score,))
         products = cur.fetchall()
 
     return products
@@ -654,32 +643,7 @@ def api_recommendations(payload):
         return jsonify(_recommendations_mock())
 
     global_id = payload['gid']
-
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        fut_ddb     = pool.submit(_fetch_ddb_meta, global_id)
-        fut_consent = pool.submit(_call_onprem, 'get_consent', global_id=global_id)
-        grade, dynamic_score, health_score, vip_prob, nba = fut_ddb.result()
-        try:
-            consent_data      = fut_consent.result()
-            consented_domains = [
-                c['domain'] for c in consent_data.get('consents', [])
-                if c.get('consent_flag') == 'Y' and not c.get('revoke_dt')
-            ]
-        except Exception:
-            app.logger.warning('consent fetch 실패 (gid=%s) — 추천 빈 결과 반환', global_id)
-            return jsonify({
-                'meta': {'grade': grade, 'score': dynamic_score, 'health': health_score,
-                         'vip_prob': vip_prob, 'next_best_action': nba},
-                'products': [],
-            })
-
-    if not consented_domains:
-        return jsonify({
-            'meta': {'grade': grade, 'score': dynamic_score, 'health': health_score,
-                     'vip_prob': vip_prob, 'next_best_action': nba},
-            'products': [],
-        })
-
+    grade, dynamic_score, health_score, vip_prob, nba = _fetch_ddb_meta(global_id)
     cached_ids = _fetch_redis_cached_ids(global_id)
 
     target_action     = _NBA_TO_ACTION.get(str(nba or '').upper())
@@ -696,7 +660,7 @@ def api_recommendations(payload):
                 cat_list, rule_action_by_cat = _match_rules(
                     cur, grade, dynamic_score, health_score, vip_required_flag, target_action,
                 )
-            products = _fetch_products(cur, cached_ids, cat_list, dynamic_score, grade, consented_domains)
+            products = _fetch_products(cur, cached_ids, cat_list, dynamic_score, grade)
             _enrich_and_record(
                 cur, products, global_id, grade, dynamic_score, health_score,
                 vip_required_flag, target_action, nba, rule_action_by_cat,
