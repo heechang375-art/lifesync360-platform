@@ -8,7 +8,7 @@ event = {
             | "count_master_customer" | "count_users" | "count_users_consented"
             | "get_master_customer" | "get_identity_map"
             | "vm_health" | "mysql_health" | "tokenization_health"
-            | "list_profile_page" | "list_consent_page",
+            | "list_profile_page" | "list_consent_page" | "list_by_age_band",
     ...params
 }
 
@@ -203,6 +203,20 @@ def handler(event, context):
             else:
                 page = int(body.get('page', 0))
                 result = _api_get(f'/internal/consent/list-all?page={page}&size={size}')
+
+        elif action == 'list_by_age_band':
+            # P3 R20 — 연령대별 global_id 그룹 반환.
+            # customer_360_profile 에 age_band 컬럼 있음. 샘플 2000건 페이지 1장 사용.
+            # admin _ai_age_perf_2step 이 Aurora IN() 조회에 사용하므로 최대 200/band 제한.
+            BANDS = ['20s', '30s', '40s', '50s', '60s+']
+            raw   = _api_get('/internal/profile/list-all?page=0&size=2000')
+            rows  = raw.get('profiles') or raw.get('data') or raw.get('items') or []
+            groups: dict = {b: [] for b in BANDS}
+            for r in rows:
+                band = r.get('age_band') or ''
+                if band in groups and len(groups[band]) < 200:
+                    groups[band].append(r['global_id'])
+            result = {'age_groups': groups, 'sampled': len(rows)}
 
         # ── 단일 헬스 체크 (P4 r40,41,42) ───────────────────────
         elif action == 'vm_health':
