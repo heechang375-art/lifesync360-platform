@@ -48,7 +48,7 @@ jobs:
   mirror-to-codecommit:
     needs: test
     runs-on: ubuntu-latest
-    # NOTE: GitHub Secrets AWS_ACCESS_KEY_ID 가 354 계정 키 (2026-05-20 활성화)
+    # NOTE: GitHub Secrets AWS_ACCESS_KEY_ID 가 354 계정 키 (활성화)
     if: github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4
