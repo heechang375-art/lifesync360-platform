@@ -34,12 +34,13 @@
 | 항목 | 상태 |
 |------|------|
 | lifesync360-platform — Mock 전체 기능 | ✅ |
-| lifesync360-platform — Aurora/DynamoDB/Redis 연동 코드 | ✅ (클라우드 배포 전) |
+| lifesync360-platform — Aurora/DynamoDB/Redis 연동 코드 | ✅ |
 | lifesync360-platform — 아키텍처 기준 컬럼명 전면 통일 | ✅ |
 | lifesync360-platform — 온프레미스 인증/동의 Lambda 연동 (_call_onprem) | ✅ |
 | lifesync360-platform — 로컬 테스트 JWT 발급 환경 (make_token.py) | ✅ |
 | lifesync360-platform — 포인트 기능 제거 (Aurora 테이블 없음, 화면 미노출) | ✅ |
 | lifesync360-platform — Service-DB 스키마 기준 쿼리 정합성 검증 완료 | ✅ |
+| lifesync360-platform — 온프레미스 시뮬레이터 EC2 실 데이터 테스트 완료 | ✅ |
 | private_api — 아키텍처 기준 컬럼명/파라미터명 전면 통일 | ✅ |
 | global_customer_id → global_id 전환 (schema.sql 2개 / lambda handler 2개) | ✅ |
 | admin-platform — Mock 전체 기능 | ✅ |
@@ -48,8 +49,11 @@
 | admin-platform — DynamoDB 기반 등급분포/유저목록 전환 | ✅ |
 | admin-platform — 온프레미스 Lambda 헬퍼 (_call_onprem) 추가 | ✅ |
 | admin-platform — user_detail URL global_id 기반 전환 | ✅ |
+| admin-platform — AI 4개 섹션 + DataVPC 통합 상태 표시 수정 | ✅ |
 | GitHub → CodeCommit 미러 CI | ✅ |
 | taskdef.json / buildspec.yml / appspec.yaml (platform + admin) | ✅ |
+| IaC / 코드 354 계정 기준 정리 (data.env, taskdef.json, app.py, start_ls360.sh) | ✅ |
+| 732 계정 CloudFormation 스택 14개 전체 삭제 + 별도 추가 리소스 정리 | ✅ |
 | /api/me name/grade 연동 (PII 복호화 + DynamoDB grade) | ⏳ |
 | Aurora users_ref 동기화 테이블 설계 및 구축 (어드민 유저목록 이름/이메일 표시) | ⏳ |
 
@@ -2255,3 +2259,113 @@ IaC 재배포 후 admin USE_MOCK=false 단계별 API 검증 체크리스트:
 3. 동의 고객만 검색 차단 로직 추가 후 push + sync
 4. REDIS_HOST env 추가 (KPI 9)
 5. 23-analytics-batch / 21-kinesis stack 배포 (KPI 4~8 / Kinesis)
+
+---
+
+## 세션 2026-05-22
+
+### 작업 목표
+Admin 플랫폼 4개 섹션 미표시 수정, DataVPC 상태 수정, lifesync360 실 데이터 테스트, IaC 354 계정 정리, 732 계정 리소스 전체 삭제.
+
+---
+
+### 1. Admin 플랫폼 — AI 4개 섹션 + DataVPC 수정
+
+**증상**
+- AI 페이지: 일별 추천 성과 추이(7일), 세그먼트 & 분포 분석, BigQuery 분석, AI 모델 평가 4개 섹션 미렌더링
+- Ops 페이지 DataVPC 카드: Kinesis 상태만 표시, S3/Glue/EMR 상태 비어있음
+
+**수정 내용**
+
+| 파일 | 변경 |
+|------|------|
+| `admin-platform/app.py` | `/api/datavpc/status` 엔드포인트 신규 추가 (S3 head_bucket + Kinesis + Glue last_run + EMR 통합 반환) |
+| `admin-platform/templates/ops.html` | DataVPC JS: `/api/kinesis/status` → `/api/datavpc/status` 교체, S3·Glue·EMR 행 렌더링 추가 |
+| `admin-platform/templates/ai.html` | 4개 섹션 SSE + 폴링 연동 수정 |
+| `admin-platform/templates/_chart_ai_trend.j2` | 7일 CTR/CVR 추이 차트 수정 |
+| `admin-platform/static/js/auto-refresh.js` | SSE 구독 안정화 |
+| `admin-platform/mockup_data.py` | 미사용 함수 제거 |
+| `admin-platform/start-admin.ps1` | USE_MOCK 환경변수 제거 |
+
+**결과 (스크린샷 확인)**
+- AI 4개 섹션 정상 렌더링 (CTR 28.3% / CVR 15.1% / 정밀도 0.61 / F1 20)
+- DataVPC: S3=EXISTS(녹색) / Kinesis=ACTIVE(녹색) / Glue=NO_RUNS(회색) / EMR=NONE(회색)
+
+---
+
+### 2. lifesync360 플랫폼 — 온프레미스 시뮬레이터 실 데이터 테스트
+
+**배포 방식**: 온프레미스 시뮬레이터 EC2(`i-0c36936f6ca95f664`, Linux) → `/opt/ls360/`에 앱 직접 배포
+
+**배포 절차**
+1. 로컬에서 `lifesync360-platform/` zip → S3 업로드
+2. SSM으로 EC2에서 S3 download + `fix_extract.py`로 Windows 경로 처리 후 압축 해제
+3. `/opt/ls360_venv/` 가상환경 생성 + 의존성 설치 (`flask flask-cors pyjwt boto3 pymysql redis playwright`)
+4. `start_ls360.sh`로 앱 기동 (Secrets Manager에서 DB/Redis 정보 로드)
+
+**도중 해결한 권한/네트워크 이슈** → 트러블슈팅 문서 참조
+
+**테스트 결과**
+
+| 항목 | 결과 |
+|------|------|
+| 로그인 | `user1@lifesync.com / Test1234!` → `ls_user_id=U00000001` ✅ |
+| DDB 조회 | `grade=A, score=87.0, vip_prob=0.82, health=85.0` ✅ |
+| 추천 API (MISS) | Aurora에서 10개 상품 반환 ✅ |
+| Redis 캐시 기록 | `rec:G000000001` = [997, 1097, 993, 999, 1093, ...] (10개) ✅ |
+| 추천 API (HIT) | 2차 호출 시 Redis 캐시 사용 ✅ |
+
+**스크린샷 저장** (`screenshots/`)
+
+| 파일 | 화면 |
+|------|------|
+| `ls360_01_login.png` | 로그인 화면 |
+| `ls360_02_home.png` | 홈 — 나를 위한 추천 10건 (grade A, score 87) |
+| `ls360_03_consent.png` | 동의 화면 — LS 8개 계열사 동의 항목 |
+| `ls360_04_settings.png` | 설정 화면 |
+| `ls360_05_myapps_api.png` | 내 신청 내역 API 응답 |
+
+---
+
+### 3. IaC / 코드 354 계정 기준 정리
+
+| 파일 | 변경 내용 |
+|------|----------|
+| `Aws_iac/Aws_iac/params/data.env` | S3 버킷명 `lifesync-732-*` → `lifesync-354-*` |
+| `admin-platform/app.py` | `/api/datavpc/status` `LIFESYNC_RAW_S3_BUCKET` 기본값 → `lifesync-354-raw` |
+| `start_ls360.sh` | `REDIS_HOST` 하드코딩(732 전용 엔드포인트) → Secrets Manager `/lifesync/dev/db/master`에서 읽도록 변경 |
+| `admin-platform/taskdef.json` | 이미 354 ARN (유지) |
+| `lifesync360-platform/taskdef.json` | 이미 354 ARN (유지) |
+| CloudFormation 템플릿 | 계정 무관 (Ref/Fn::GetAtt) — 변경 불필요 |
+
+**354 계정 배포 준비 상태**: ECS 배포 기준으로 코드/IaC 준비 완료. 스택 올리면 신규 엔드포인트가 Secrets Manager → taskdef.json 경로로 자동 주입됨.
+
+---
+
+### 4. Git Push
+
+| 커밋 해시 | 내용 |
+|-----------|------|
+| `1da3b4e` | feat(admin): DataVPC 통합 API + AI 4개 섹션 + ops.html + 354 기준 정리 |
+| `0d391b2` | fix(ls360): start_ls360.sh Redis 엔드포인트 Secrets Manager로 이관 |
+
+---
+
+### 5. 732 계정 AWS 리소스 전체 삭제
+
+**CloudFormation 스택 14개 전부 DELETE_COMPLETE**
+
+삭제 순서 (역의존성):
+`27-onprem-simulator` → `26-onprem-query` → `24-admin-windows-ec2` → `22-identity-enricher` → `15-cicd` → `12-ec2` → `11-observability` → `10-data-processing` → `09-streaming-api-lambda` → `08-database` → `07-ecr` → `06-s3` → `02-security` → `01-network`
+
+**별도 추가 리소스 정리**
+
+| 리소스 | 조치 |
+|--------|------|
+| IAM 인라인 정책 6개 (admin EC2, simulator EC2) | 스택 삭제 전 수동 제거 |
+| SG 인바운드 규칙 4개 (Aurora, Redis에 추가한 것) | 수동 제거 후 스택 삭제 |
+| S3 버킷 내용 (raw 8개, artifact 50개) | 비운 후 CFN 삭제 |
+| Secrets Manager 2개 (`lifesync/ansible-vault`, `lifesync/onprem-db`) | 즉시 삭제 |
+| DynamoDB `lifesync_customer_result` | 수동 삭제 (DeletionPolicy: Retain이었던 것) |
+| Lambda, ECR, CodeCommit | 스택 삭제로 함께 제거됨 |
+

@@ -176,3 +176,23 @@ aws iam put-role-policy \
 |-------------|------|---------|
 | `AWS_ACCESS_KEY_ID` | IAM 액세스 키 ID (20자, `AKIA`로 시작) | **엑셀로 열지 말 것** — `+` 시작 값에 `=` 자동 추가되어 오염됨 |
 | `AWS_SECRET_ACCESS_KEY` | IAM 시크릿 키 (40자) | 메모장에서 직접 복사, 앞뒤 공백 없이 입력 |
+
+---
+
+## 세션 2026-05-22 트러블슈팅
+
+| 순서 | 오류 | 원인 | 해결 |
+|------|------|------|------|
+| 21 | 시뮬레이터 EC2에서 `secretsmanager:GetSecretValue` AccessDeniedException | 온프레미스 시뮬레이터 EC2 IAM 역할(`OnpremSimRole`)에 Secrets Manager 권한 없음 | `aws iam put-role-policy`로 인라인 정책 `secrets-db-access` 추가 (`secretsmanager:GetSecretValue` on `/lifesync/dev/db/master-*`) |
+| 22 | 시뮬레이터 EC2에서 `lambda:InvokeFunction` AccessDeniedException (로그인 503) | `OnpremSimRole`에 Lambda 호출 권한 없음 | `lambda-invoke-onprem` 인라인 정책 추가 (`lifesync-onprem-customer-query` 한정) |
+| 23 | 시뮬레이터 EC2에서 S3 403 Forbidden (`aws s3 cp` 실패) | `OnpremSimRole`에 S3 GetObject 권한 없음 | `s3-deploy-read` 인라인 정책 추가 (`lifesync-732-raw/deploy/*`) |
+| 24 | 시뮬레이터 EC2에서 DynamoDB `GetItem` ValidationException | 테이블 키 스키마가 복합키(`global_id` HASH + `update_time` RANGE)인데 `GetItem`에 HASH 키만 전달 | app.py의 `_fetch_ddb_meta`는 `Query`로 처리 — 테스트 스크립트에서 `Query` 사용으로 수정. `OnpremSimRole`에 `dynamodb-customer-result` 정책 추가 |
+| 25 | Redis `WRONGTYPE Operation against a key holding the wrong kind of value` | `rec:G000000001` 키가 이전에 `zset` 타입으로 적재되어 있었음. app.py는 `setex`(string 타입)로 읽기 시도 | `redis.delete('rec:G000000001')`로 기존 키 삭제 후 재시도 |
+| 26 | 시뮬레이터 EC2 → Aurora/Redis 연결 타임아웃 | Aurora SG, Redis SG 인바운드에 시뮬레이터 EC2 SG 허용 규칙 없음 (같은 VPC지만 SG 미개방) | `aws ec2 authorize-security-group-ingress`로 각각 추가: Aurora SG ← 시뮬레이터 SG (3306), Redis SG ← 시뮬레이터 SG (6379) |
+| 27 | Windows PowerShell Compress-Archive로 만든 zip → Linux에서 압축 해제 실패 | Windows zip에 `\` 경로 구분자가 그대로 저장됨. Linux unzip이 경로 인식 못하고 파일명으로 처리 | `fix_extract.py` 작성: zipfile 모듈로 직접 파일별 iterate → `info.filename.replace('\', '/')` 후 대상 경로 생성 |
+| 28 | lifesync360 로그인 엔드포인트 404 | 코드 라우트는 `/api/login`인데 `/api/auth/login`으로 요청 | `grep -n "@app.route" app.py`로 실제 라우트 확인 후 수정 |
+| 29 | Flask 앱 재시작 시 "Address already in use" — 이전 프로세스 잔존 | `start_ls360.sh`의 `pkill` 패턴이 `python3 /opt/ls360/app.py`인데 실제 프로세스는 venv python 경로로 실행됨 → kill 실패 → 포트 충돌 | `pkill -9 -f "python.*app.py"`로 패턴 변경 |
+| 30 | localStorage token 주입 후 홈 화면이 로그인으로 리다이렉트 | Playwright에서 `localStorage.setItem('access_token', token)`으로 저장했으나 앱 코드는 `localStorage.getItem('ls_token')` 사용 | `grep -n "localStorage" templates/index.html`으로 실제 키 확인 → `ls_token`으로 수정 |
+| 31 | CFN 스택 24(`admin-windows-ec2`) DELETE_FAILED — AdminInstanceSg 삭제 불가 | Aurora SG, Redis SG, SSM VPCE SG 세 곳에 admin EC2 SG(`sg-05442a13d8b9a3bcb`)가 인바운드 소스로 참조되어 있음 | 세 SG에서 admin SG 참조 인바운드 규칙 모두 수동 제거 후 스택 재삭제 |
+| 32 | `start_ls360.sh` Redis 엔드포인트 하드코딩 — 732 전용 | `export REDIS_HOST="lif-re-dm1gt0avdbns..."` — 354 계정에서 존재하지 않는 엔드포인트 | Secrets Manager `/lifesync/dev/db/master`에서 `REDIS_HOST` 키 함께 읽도록 변경 (DB 크레덴셜과 동일 패턴) |
+
