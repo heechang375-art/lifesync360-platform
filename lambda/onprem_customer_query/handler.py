@@ -129,6 +129,8 @@ def handler(event, context):
             })
         elif action == 'get_user':
             result = _api_get(f'/internal/auth/user/{body["ls_user_id"]}')
+        elif action == 'get_user_by_global':
+            result = _api_get(f'/internal/auth/user/by_global/{body["global_id"]}')
         elif action == 'get_consent':
             result = _api_get(f'/internal/consent/{body["global_id"]}')
         elif action == 'save_consent':

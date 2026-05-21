@@ -697,8 +697,9 @@ def api_my_applications(payload):
              'status':'RECEIVED','created_at':'2026-05-10 09:15:05'},
         ])
 
+    db = get_db()
     try:
-        with get_db() as db, db.cursor() as cur:
+        with db.cursor() as cur:
             cur.execute(
                 "SELECT a.application_id, p.product_code, p.product_name, "
                 "       c.company_name, cat.category_name, a.status, a.created_at "
@@ -713,10 +714,12 @@ def api_my_applications(payload):
             rows = []
             for r in cur.fetchall():
                 rows.append({**r, 'created_at': str(r['created_at']) if r.get('created_at') else None})
-            return jsonify(rows)
+        return jsonify(rows)
     except Exception:
         app.logger.exception('my-applications query failed (gid=%s)', payload['gid'])
         return jsonify([])
+    finally:
+        db.close()
 
 
 @app.route('/api/campaigns')
@@ -897,14 +900,24 @@ def api_product_apply(product_code, payload):
     INSERT 시점에는 4컬럼 (status default 'RECEIVED', 나머지 자동/NULL).
     컨택 정보(이름/전화/금액/메모/마케팅동의) 는 별도 시스템 책임 — Aurora 미저장.
     """
-    application_id = f"APP-{datetime.datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{payload['sub'][-6:]}"
-
     if USE_MOCK:
+        application_id = f"APP-{datetime.datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{payload['sub'][-6:]}"
         return jsonify({'status': 'ok', 'application_id': application_id})
 
     db = get_db()
     try:
         with db.cursor() as cur:
+            # 온프레미스 users 테이블에서 실제 ls_user_id 조회 (JWT mock 값과 다를 수 있음)
+            real_ls_user_id = payload['sub']
+            try:
+                u = _call_onprem('get_user_by_global', global_id=payload['gid'])
+                if u and u.get('ls_user_id'):
+                    real_ls_user_id = u['ls_user_id']
+            except Exception:
+                pass
+
+            application_id = f"APP-{datetime.datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{real_ls_user_id[-6:]}"
+
             # product_id 조회 (apply.html 이 보내준 product_id 가 null/모를 수도 있어 안전하게 재조회)
             cur.execute(
                 "SELECT product_id FROM product_master WHERE product_code = %s AND active_flag = 'Y'",
@@ -920,7 +933,7 @@ def api_product_apply(product_code, payload):
                 INSERT INTO customer_product_application
                   (application_id, global_id, ls_user_id, product_id)
                 VALUES (%s, %s, %s, %s)
-            """, (application_id, payload['gid'], payload['sub'], product_id))
+            """, (application_id, payload['gid'], real_ls_user_id, product_id))
             # 신청 즉시 customer_recommend_history.purchased_flag='Y' UPDATE
             # (apply_submitted event 와 중복되어도 LIMIT 1 + WHERE purchased_flag='N' 조건이라 안전)
             cur.execute(

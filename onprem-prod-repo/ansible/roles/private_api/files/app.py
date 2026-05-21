@@ -396,6 +396,23 @@ def pii_masked_proxy(global_id: str):
         raise HTTPException(status_code=502, detail='tokenization 서버 연결 실패')
 
 
+@app.get('/internal/auth/user/by_global/{global_id}')
+def auth_get_user_by_global(global_id: str):
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            cur.execute(
+                'SELECT ls_user_id, global_id, login_email FROM users WHERE global_id = %s LIMIT 1',
+                (global_id,)
+            )
+            user = cur.fetchone()
+    finally:
+        db.close()
+    if not user:
+        raise HTTPException(status_code=404, detail='사용자 없음')
+    return user
+
+
 @app.get('/internal/auth/user/{ls_user_id}')
 def auth_get_user(ls_user_id: str):
     db = get_db()
