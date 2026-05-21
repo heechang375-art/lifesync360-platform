@@ -28,7 +28,7 @@
       "secrets": [
         {
           "name": "JWT_SECRET",
-          "valueFrom": "arn:aws:ssm:ap-northeast-2:354493396671:parameter/lifesync360/jwt-secret"
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:ecs-jwt-signing-hDXOQc:jwt::"
         }
       ],
       "logConfiguration": {
