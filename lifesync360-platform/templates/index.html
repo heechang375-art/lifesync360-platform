@@ -239,6 +239,37 @@
                 });
             }
         }
+
+        const statusMap = {
+            'RECEIVED':  { bg:'#eff6ff', color:'#1e40af', label:'접수' },
+            'IN_REVIEW': { bg:'#fefce8', color:'#854d0e', label:'검토중' },
+            'APPROVED':  { bg:'#f0fdf4', color:'#166534', label:'승인' },
+            'REJECTED':  { bg:'#fef2f2', color:'#991b1b', label:'거절' },
+            'CANCELED':  { bg:'#f8fafc', color:'#475569', label:'취소' },
+        };
+        const appsEl   = document.getElementById('my-applications-list');
+        const countEl  = document.getElementById('my-applications-count');
+        if (appsRes.ok) {
+            const apps = await appsRes.json();
+            if (countEl) countEl.textContent = apps.length ? `${apps.length}건` : '';
+            if (apps.length === 0) {
+                appsEl.innerHTML = '<div style="padding:14px;color:#94a3b8;font-size:13px;text-align:center;">신청 내역이 없습니다.</div>';
+            } else {
+                appsEl.innerHTML = apps.map(a => {
+                    const st = statusMap[a.status] || { bg:'#f8fafc', color:'#475569', label: a.status };
+                    return `<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px;display:flex;gap:12px;align-items:center;box-shadow:0 1px 2px rgba(0,0,0,.03);">
+                        <div style="flex:1;min-width:0;">
+                            <div style="font-size:14px;font-weight:700;color:#0f172a;margin-bottom:2px;">${a.product_name || '-'}</div>
+                            <div style="font-size:12px;color:#475569;">${a.company_name || ''} · ${a.category_name || ''}</div>
+                            ${a.created_at ? `<div style="font-size:11px;color:#94a3b8;margin-top:4px;">${a.created_at}</div>` : ''}
+                        </div>
+                        <span style="padding:3px 10px;font-size:11px;border-radius:999px;background:${st.bg};color:${st.color};font-weight:600;white-space:nowrap;">${st.label}</span>
+                    </div>`;
+                }).join('');
+            }
+        } else {
+            appsEl.innerHTML = '<div style="padding:14px;color:#94a3b8;font-size:13px;text-align:center;">신청 내역을 불러올 수 없습니다.</div>';
+        }
     })();
 
     function openHealthModal() {
