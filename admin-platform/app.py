@@ -1357,10 +1357,9 @@ def _stub_aurora_summary():
     if USE_MOCK:
         return MOCKUP_DASH_KPI
 
-    # 운영 — onprem Lambda + DDB scan 호출. Lambda timeout 3s (boto3 Config)
     cards = [dict(c, value='-') for c in MOCKUP_DASH_KPI]
 
-    # 1. 통합 고객 수 / 2. 플랫폼 가입자 / 3. 분석 대상 (On-Prem PrivateAPI 경유)
+    # KPI 1~3: On-Prem Lambda (VPN 연결 필요)
     for idx, action in [(0, 'count_master_customer'), (1, 'count_users'), (2, 'count_users_consented')]:
         try:
             c = (_call_onprem(action) or {}).get('count')
@@ -1369,11 +1368,49 @@ def _stub_aurora_summary():
         except Exception:
             pass
 
-    # 9. AI 추천 상태 — DDB 최신 update_time (Vertex AI 배치 시각)
+    # KPI 4: AI 추천 상태 — DDB 최신 update_time
     try:
         items = get_dynamo_table().scan(ProjectionExpression='update_time', Limit=1).get('Items', [])
         if items and items[0].get('update_time'):
-            cards[8]['sub'] = f"DynamoDB · 최근 갱신 {items[0]['update_time']}"
+            cards[3]['value'] = 'Vertex AI'
+            cards[3]['sub'] = f"DynamoDB · 최근 갱신 {items[0]['update_time']}"
+    except Exception:
+        pass
+
+    # KPI 5~8: Aurora 추천 통계
+    try:
+        with get_db() as db, db.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) AS total, "
+                "SUM(clicked_flag) AS clicked, "
+                "SUM(purchased_flag) AS purchased "
+                "FROM customer_recommend_history"
+            )
+            r = cur.fetchone()
+            if r and r['total']:
+                cards[4]['value'] = f"{int(r['total']):,}"
+                ctr = (r['clicked'] or 0) / r['total'] * 100
+                cvr = (r['purchased'] or 0) / (r['clicked'] or 1) * 100
+                cards[6]['value'] = f"{ctr:.1f}%"
+                cards[7]['value'] = f"{cvr:.1f}%"
+    except Exception:
+        pass
+
+    try:
+        with get_db() as db, db.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS cnt FROM customer_dashboard_log")
+            r = cur.fetchone()
+            if r:
+                n = int(r['cnt'])
+                cards[5]['value'] = f"{n/1e6:.1f}M" if n >= 1_000_000 else f"{n:,}"
+    except Exception:
+        pass
+
+    # KPI 9: Redis DBSIZE
+    try:
+        rc = _get_redis()
+        if rc:
+            cards[8]['value'] = f"{rc.dbsize():,}"
     except Exception:
         pass
 
