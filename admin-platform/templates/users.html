@@ -5,11 +5,25 @@
 <!-- 검색바 -->
 <section class="section">
     <form class="search-bar" method="get" action="{{ url_for('users') }}">
-        <input class="form-input" type="text" name="q" value="{{ q }}" placeholder="C000297409">
+        <input class="form-input" type="text" name="q" value="{{ q }}" placeholder="G000000924" maxlength="10" pattern="[GC][0-9]{9}" title="G 또는 C + 9자리 숫자">
         <button class="btn btn-primary" type="submit">검색</button>
-        <span class="search-hint">분석 대상 60,000명 검색 가능</span>
+        <span class="search-hint">G + 9자리 (예: G000000924) — On-Prem master_customer 919,502명 검색</span>
     </form>
 </section>
+
+{% if consent_gate != 'ok' %}
+<section class="section">
+    <div class="card" style="border-left:4px solid #f59e0b; background:#fffbeb;">
+        {% if consent_gate == 'not_registered' %}
+        <div style="font-size:15px; font-weight:700; color:#b45309;">⚠️ 가입 안 됨</div>
+        <div style="font-size:13px; color:#92400e; margin-top:6px;">{{ q }} 고객은 LifeSync 앱에 가입하지 않았습니다. 데이터 조회 불가.</div>
+        {% elif consent_gate == 'not_consented' %}
+        <div style="font-size:15px; font-weight:700; color:#b45309;">🔒 동의 안 됨</div>
+        <div style="font-size:13px; color:#92400e; margin-top:6px;">{{ q }} 고객은 LifeSync 앱에 가입했으나 계열사 데이터 동의를 하지 않았습니다. 데이터 조회 불가.</div>
+        {% endif %}
+    </div>
+</section>
+{% else %}
 
 <!-- 프로필 헤더 -->
 <section class="section">
@@ -162,4 +176,5 @@
 
     </div>
 </div>
+{% endif %}
 {% endblock %}

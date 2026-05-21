@@ -27,31 +27,6 @@
 <div class="page-title">Network & Connectivity</div>
 <div class="page-sub">멀티 클라우드 + 온프레미스 네트워크 상태 + AWS · GCP · On-Prem</div>
 
-<!-- 인프라 토폴로지 -->
-<section class="section">
-    <div class="section-title">🌐 인프라 토폴로지</div>
-    <div class="topo">
-        <div class="topo-group">
-            {% for a in topology.aws %}
-            <div class="topo-box" style="background:{{ a.bg }}; border-color:{{ a.border }};">
-                <div class="topo-title">{{ a.name }} <span class="dot"></span></div>
-                {% for line in a.lines %}<div>{{ line }}</div>{% endfor %}
-            </div>
-            {% endfor %}
-        </div>
-        <span class="topo-arrow">⟷</span>
-        <div class="topo-box" style="background:{{ topology.gcp.bg }}; border-color:{{ topology.gcp.border }};">
-            <div class="topo-title">{{ topology.gcp.name }} <span class="dot"></span></div>
-            {% for line in topology.gcp.lines %}<div>{{ line }}</div>{% endfor %}
-        </div>
-        <span class="topo-arrow">⟷</span>
-        <div class="topo-box" style="background:{{ topology.onprem.bg }}; border-color:{{ topology.onprem.border }};">
-            <div class="topo-title">{{ topology.onprem.name }} <span class="dot"></span></div>
-            {% for line in topology.onprem.lines %}<div>{{ line }}</div>{% endfor %}
-        </div>
-    </div>
-</section>
-
 <!-- AWS 3 VPC -->
 <section class="section">
     <div class="section-title">📦 AWS VPC <span class="pipe">|</span> <span class="sub">Platform · Data · Group VM</span><span class="ts" id="ts-ops-vpc">갱신: --:--:--</span></div>

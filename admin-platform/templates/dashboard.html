@@ -34,6 +34,15 @@
                 <div class="cloud-title">{{ c.title }}</div>
                 <div class="cloud-state"><span class="dot"></span> <span id="cloud-state-{{ loop.index0 }}">{{ c.state }}</span></div>
                 <div class="cloud-sub" id="cloud-sub-{{ loop.index0 }}">{{ c.sub }}</div>
+                <div class="cloud-details" id="cloud-details-{{ loop.index0 }}">
+                    {% for d in c.details or [] %}
+                    <div class="cloud-detail-row">
+                        <span class="cloud-detail-dot cloud-detail-{{ d.state|lower }}"></span>
+                        <span class="cloud-detail-name">{{ d.name }}</span>
+                        <span class="cloud-detail-note">{{ d.note }}</span>
+                    </div>
+                    {% endfor %}
+                </div>
             </div>
         </div>
         {% endfor %}
@@ -100,9 +109,21 @@ window.addEventListener('DOMContentLoaded', function () {
                 url: '/api/dashboard/cloud3',
                 apply: function (data) {
                     if (!Array.isArray(data)) return;
+                    var esc = AutoRefresh.escapeHtml;
                     for (var i = 0; i < cloudCount && i < data.length; i++) {
                         AutoRefresh.setText('cloud-state-' + i, data[i].state || '');
                         AutoRefresh.setText('cloud-sub-'   + i, data[i].sub   || '');
+                        var details = data[i].details || [];
+                        var html = details.map(function (d) {
+                            var st = (d.state || '').toLowerCase();
+                            return '<div class="cloud-detail-row">' +
+                                '<span class="cloud-detail-dot cloud-detail-' + st + '"></span>' +
+                                '<span class="cloud-detail-name">' + esc(d.name) + '</span>' +
+                                '<span class="cloud-detail-note">' + esc(d.note) + '</span>' +
+                            '</div>';
+                        }).join('');
+                        var el = document.getElementById('cloud-details-' + i);
+                        if (el && el.innerHTML !== html) el.innerHTML = html;
                     }
                     AutoRefresh.stampNow('ts-cloud');
                 },

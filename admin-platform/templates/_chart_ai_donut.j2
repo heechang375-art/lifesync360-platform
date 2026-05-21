@@ -1,0 +1,29 @@
+{# 카테고리별 도넛 — cat_donut: [{name, pct, color}, ...] 빈 list 면 안내 #}
+{% if cat_donut %}
+<div class="donut-wrap">
+    <svg viewBox="0 0 120 120" style="width:120px; height:120px; flex-shrink:0;">
+        {% set r = 45 %}
+        {% set ns = namespace(off=0) %}
+        {% for c in cat_donut %}
+        {% set len = c.pct * 2 * 3.14159 * r / 100 %}
+        <circle cx="60" cy="60" r="{{ r }}" fill="none" stroke="{{ c.color }}" stroke-width="18"
+            stroke-dasharray="{{ len }} {{ 2 * 3.14159 * r }}" stroke-dashoffset="-{{ ns.off }}"
+            transform="rotate(-90 60 60)"/>
+        {% set ns.off = ns.off + len %}
+        {% endfor %}
+        <text x="60" y="58" text-anchor="middle" font-size="13" font-weight="700" fill="#1e293b">100%</text>
+        <text x="60" y="72" text-anchor="middle" font-size="9" fill="#94a3b8">CTR 기준</text>
+    </svg>
+    <div class="donut-legend">
+        {% for c in cat_donut %}
+        <div class="donut-legend-row">
+            <span class="dot" style="background: {{ c.color }};"></span>
+            <span class="name">{{ c.name }}</span>
+            <span class="pct">{{ c.pct }}%</span>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% else %}
+<div style="height:120px; display:flex; align-items:center; justify-content:center; color:#cbd5e1; font-size:12px; border:1px dashed #e5e7eb; border-radius:6px;">데이터 없음</div>
+{% endif %}

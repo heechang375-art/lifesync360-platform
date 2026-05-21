@@ -12,15 +12,30 @@ from flask import Flask, Response, render_template, request, redirect, url_for, 
 
 import wearable_engine
 
+
+def _bootstrap_secrets():
+    """Secrets Manager /lifesync/dev/db/master → os.environ (미설정 항목만 주입)"""
+    try:
+        client = boto3.client('secretsmanager', region_name='ap-northeast-2')
+        resp = client.get_secret_value(SecretId='/lifesync/dev/db/master')
+        for k, v in json.loads(resp['SecretString']).items():
+            if not os.environ.get(k):
+                os.environ[k] = str(v)
+    except Exception:
+        pass
+
+
+_bootstrap_secrets()
+
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'admin-dev-secret-32bytes-lifesync!!')  # TODO: 운영 배포 시 env var로 교체
 
 USE_MOCK             = os.environ.get('USE_MOCK', 'true').lower() != 'false'  # default true, 명시 'false'만 비Mock
 ADMIN_USER           = os.environ.get('ADMIN_USER', 'admin')
 ADMIN_PASS           = os.environ.get('ADMIN_PASSWORD', 'admin123')
-DYNAMO_TABLE         = os.environ.get('DYNAMO_TABLE', 'lifesync-scores')
-DDB_SEGMENT_TABLE    = os.environ.get('DDB_SEGMENT_TABLE',    'analytics_segment_daily')
-DDB_DEMOGRAPHIC_TABLE= os.environ.get('DDB_DEMOGRAPHIC_TABLE','analytics_demographic_daily')
+DYNAMO_TABLE         = os.environ.get('DYNAMO_TABLE', 'lifesync_customer_result')
+DDB_SEGMENT_TABLE    = os.environ.get('DDB_SEGMENT_TABLE',    'analytics_segment_performance')
+DDB_DEMOGRAPHIC_TABLE= os.environ.get('DDB_DEMOGRAPHIC_TABLE','analytics_demographic_information')
 AWS_REGION           = os.environ.get('AWS_REGION', 'ap-northeast-2')
 ONPREM_QUERY_LAMBDA  = os.environ.get('ONPREM_QUERY_LAMBDA', '')
 
@@ -113,7 +128,7 @@ def _get_lambda():
     if _lambda_client is None:
         from botocore.config import Config
         # Lambda invoke 응답 안 오면 3초만 기다림 — 화면 hang 방지
-        cfg = Config(connect_timeout=2, read_timeout=3, retries={'max_attempts': 1})
+        cfg = Config(connect_timeout=3, read_timeout=20, retries={'max_attempts': 1})
         _lambda_client = boto3.client('lambda', region_name=AWS_REGION, config=cfg)
     return _lambda_client
 
@@ -208,32 +223,55 @@ def _ping_cloud_status():
     except Exception as e:
         out.append({'service': 'AWS ALB', 'state': 'ERR', 'note': str(e)[:60]})
     try:
-        buckets = _boto('s3').list_buckets().get('Buckets', [])
+        buckets = [b for b in _boto('s3').list_buckets().get('Buckets', []) if b.get('Name', '').startswith('lifesync')]
         out.append({'service': 'AWS S3', 'state': 'UP', 'note': f'{len(buckets)} buckets'})
     except Exception as e:
         out.append({'service': 'AWS S3', 'state': 'ERR', 'note': str(e)[:60]})
     return out
 
 
+_RAW_DOMAIN_PREFIXES = (
+    'bank/', 'card/', 'insurance/', 'securities/',
+    'healthcare/', 'hospital/', 'wearable/', 'online_insurance/',
+)
+
+
 def _ping_s3_ingestion():
-    """S3 Data Ingestion — raw bucket 적재 현황."""
+    """S3 Data Ingestion — raw bucket 적재 현황.
+
+    전체 객체 수는 CloudWatch S3 NumberOfObjects metric (일배치, 1일 지연).
+    today/iot/latest 는 도메인 prefix 별 MaxKeys=1000 조회 (페이지네이션 회피).
+    """
     raw_bucket = os.environ.get('LIFESYNC_RAW_S3_BUCKET', '')
     if not raw_bucket:
         return {'raw_bucket_files': 0, 'today_ingested': 0, 'iot_count': 0,
                 'last_upload': {}, 'failed_count': 0}
-    from datetime import datetime, timezone
+    from datetime import datetime, timezone, timedelta
     today_prefix = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    total = 0
+    try:
+        cw = _boto('cloudwatch')
+        now = datetime.now(timezone.utc)
+        resp = cw.get_metric_statistics(
+            Namespace='AWS/S3', MetricName='NumberOfObjects',
+            Dimensions=[{'Name': 'BucketName', 'Value': raw_bucket},
+                        {'Name': 'StorageType', 'Value': 'AllStorageTypes'}],
+            StartTime=now - timedelta(days=3), EndTime=now,
+            Period=86400, Statistics=['Average'])
+        pts = sorted(resp.get('Datapoints', []), key=lambda d: d['Timestamp'], reverse=True)
+        total = int(pts[0]['Average']) if pts else 0
+    except Exception:
+        pass
     try:
         s3 = _boto('s3')
-        paginator = s3.get_paginator('list_objects_v2')
-        total = today = iot = 0
+        today = iot = 0
         latest = None
-        for page in paginator.paginate(Bucket=raw_bucket):
-            for o in page.get('Contents', []):
-                total += 1
+        for prefix in _RAW_DOMAIN_PREFIXES:
+            resp = s3.list_objects_v2(Bucket=raw_bucket, Prefix=prefix, MaxKeys=1000)
+            for o in resp.get('Contents', []):
                 if today_prefix in o['Key']:
                     today += 1
-                if 'wearable' in o['Key'].lower() or 'iot' in o['Key'].lower():
+                if 'wearable' in prefix or 'iot' in o['Key'].lower():
                     iot += 1
                 if latest is None or o['LastModified'] > latest['LastModified']:
                     latest = o
@@ -249,7 +287,7 @@ def _ping_s3_ingestion():
             'failed_count': 0,
         }
     except Exception:
-        return {'raw_bucket_files': 0, 'today_ingested': 0, 'iot_count': 0,
+        return {'raw_bucket_files': total, 'today_ingested': 0, 'iot_count': 0,
                 'last_upload': {}, 'failed_count': 0}
 
 
@@ -503,17 +541,28 @@ def _ping_tgw():
 
 def _ping_vpn():
     try:
-        conns = _boto('ec2').describe_vpn_connections().get('VpnConnections', [])
+        ec2  = _boto('ec2')
+        conns = [c for c in ec2.describe_vpn_connections().get('VpnConnections', []) if c.get('State') != 'deleted']
+        cgw_cache = {}
         out = []
         for c in conns:
+            cgw_id = c.get('CustomerGatewayId', '')
+            if cgw_id and cgw_id not in cgw_cache:
+                try:
+                    cgw = ec2.describe_customer_gateways(CustomerGatewayIds=[cgw_id]).get('CustomerGateways', [])
+                    cgw_cache[cgw_id] = cgw[0] if cgw else {}
+                except Exception:
+                    cgw_cache[cgw_id] = {}
+            cgw_info = cgw_cache.get(cgw_id, {})
+            tag_name = next((t['Value'] for t in c.get('Tags', []) if t.get('Key') == 'Name'), '-')
             for t in c.get('VgwTelemetry', []) or [{'OutsideIpAddress': '-', 'Status': '-'}]:
                 out.append({
                     'id':               f"{c['VpnConnectionId']}-{t.get('OutsideIpAddress', '?')}",
                     'status':           t.get('Status', '-').upper(),
-                    'bgp_asn':          c.get('CustomerGatewayConfiguration', '-'),
+                    'bgp_asn':          str(cgw_info.get('BgpAsn', '-')),
                     'traffic_in_mbps':  0,
                     'traffic_out_mbps': 0,
-                    'peer':             c.get('Tags', [{}])[0].get('Value', '-') if c.get('Tags') else '-',
+                    'peer':             cgw_info.get('IpAddress', tag_name),
                 })
         return {'tunnels': out}
     except Exception:
@@ -932,15 +981,20 @@ def _stub_redis_personalized(global_id):
 
 # ── analytics batch 결과 read 헬퍼 (P3 r10/r12/r13) ─────────────
 def _aurora_recommend_trend_7day():
-    """Aurora customer_recommend_daily 에서 최근 7일치 + 7일 평균. P3 r10."""
+    """7일 추이 — customer_recommend_history GROUP BY DATE. V6 R10/R11."""
     try:
         with get_db() as db, db.cursor() as cur:
             cur.execute(
-                "SELECT date, recommended, ctr, cvr, "
-                "       AVG(ctr) OVER() AS avg_ctr, "
-                "       AVG(cvr) OVER() AS avg_cvr "
-                "FROM customer_recommend_daily "
-                "WHERE date >= CURDATE() - INTERVAL 7 DAY "
+                "SELECT DATE(recommended_at) AS date, "
+                "       COUNT(*) AS recommended, "
+                "       SUM(clicked_flag='Y') AS clicked, "
+                "       SUM(purchased_flag='Y') AS purchased, "
+                "       ROUND(SUM(clicked_flag='Y') * 100.0 / COUNT(*), 2) AS ctr, "
+                "       ROUND(SUM(purchased_flag='Y') * 100.0 / "
+                "             NULLIF(SUM(clicked_flag='Y'), 0), 2) AS cvr "
+                "FROM customer_recommend_history "
+                "WHERE recommended_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY) "
+                "GROUP BY DATE(recommended_at) "
                 "ORDER BY date"
             )
             rows = cur.fetchall()
@@ -951,7 +1005,7 @@ def _aurora_recommend_trend_7day():
         return []
 
 
-def _ddb_query_today(table_name, sk_prefix=None):
+def _ddb_query_today(table_name, sk_prefix=None, sk_attr='segment_key'):
     """analytics_* DDB 테이블 오늘 snapshot_date 조회. sk_prefix 있으면 begins_with."""
     from datetime import date as _date
     from boto3.dynamodb.conditions import Key
@@ -960,7 +1014,7 @@ def _ddb_query_today(table_name, sk_prefix=None):
         table = boto3.resource('dynamodb', region_name=AWS_REGION).Table(table_name)
         kw = {'KeyConditionExpression': Key('snapshot_date').eq(today)}
         if sk_prefix:
-            kw['KeyConditionExpression'] &= Key('segment_key').begins_with(sk_prefix)
+            kw['KeyConditionExpression'] &= Key(sk_attr).begins_with(sk_prefix)
         return table.query(**kw).get('Items', [])
     except Exception:
         return []
@@ -1016,12 +1070,20 @@ def overview():
 @app.route('/dashboard')
 @login_required
 def dashboard():
+    if USE_MOCK:
+        return render_template('dashboard.html',
+            active='dashboard',
+            kpi=MOCKUP_DASH_KPI,
+            cloud3=MOCKUP_DASH_CLOUD3,
+            s3_cards=MOCKUP_DASH_S3_5,
+            uploads=MOCKUP_DASH_RECENT_UPLOADS,
+        )
     return render_template('dashboard.html',
         active='dashboard',
-        kpi=MOCKUP_DASH_KPI,
-        cloud3=MOCKUP_DASH_CLOUD3,
-        s3_cards=MOCKUP_DASH_S3_5,
-        uploads=MOCKUP_DASH_RECENT_UPLOADS,
+        kpi=[dict(c, value='-') for c in MOCKUP_DASH_KPI],
+        cloud3=[dict(c, state='-', sub='-') for c in MOCKUP_DASH_CLOUD3],
+        s3_cards=[dict(c, value='-', note='-') for c in MOCKUP_DASH_S3_5],
+        uploads=[],
     )
 
 
@@ -1033,6 +1095,7 @@ def users():
     if USE_MOCK:
         return render_template('users.html',
             active='customer', q=q,
+            consent_gate='ok',
             profile=MOCKUP_C360_PROFILE,
             status_rows=MOCKUP_C360_STATUS,
             consent_badges=MOCKUP_C360_CONSENT_BADGES,
@@ -1044,13 +1107,98 @@ def users():
             recent_recommend=MOCKUP_C360_RECENT_RECOMMEND,
             recent_activity=MOCKUP_C360_RECENT_ACTIVITY,
         )
-    # USE_MOCK=false — 안 들어오는 데이터 빈 (검색 후 user_detail 로 드릴다운)
-    return render_template('users.html',
+    # USE_MOCK=false — consent gate 먼저 확인 후 profile/pii 조회
+    domain_label = {'BANK':'은행','CARD':'카드','INS':'보험','HLT':'헬스케어',
+                    'HOS':'병원','WBL':'웨어러블','SEC':'증권','ONINS':'온라인보험'}
+    _empty_profile = {
+        'global_id': q, 'name_masked': '-', 'phone_masked': '-',
+        'grade': '-', 'gender': '-', 'age_band': '-', 'region': '-',
+        'income': '-', 'asset': '-',
+        'ai_total_score': '-', 'ai_health_score': '-',
+    }
+    _empty_render = dict(
         active='customer', q=q,
-        profile={}, status_rows=[],
+        profile=_empty_profile, status_rows=[],
         consent_badges=[], owned_badges=[],
         topn=[], crosssell=[],
-        nba={}, precision={},
+        nba={'action': '-', 'targets': [], 'response_prob': 0, 'updated_at': '-'},
+        precision=[], recent_recommend=[], recent_activity=[],
+    )
+
+    # ① consent gate
+    consent_gate   = 'ok'
+    consent_badges = []
+    try:
+        consent = (_call_onprem('get_consent', global_id=q) or {})
+        ls_user_id = consent.get('ls_user_id') or ''
+        if not ls_user_id:
+            consent_gate = 'not_registered'
+        else:
+            active = [c for c in (consent.get('consents') or [])
+                      if c.get('consent_flag') == 'Y' or c.get('agreed')]
+            if not active:
+                consent_gate = 'not_consented'
+            else:
+                consent_badges = [domain_label.get(c.get('domain'), c.get('domain', c.get('key', '?')))
+                                  for c in active]
+    except Exception:
+        consent_gate = 'not_registered'
+
+    if consent_gate != 'ok':
+        return render_template('users.html', consent_gate=consent_gate, **_empty_render)
+
+    # ② profile + pii (gate 통과 후)
+    profile     = dict(_empty_profile)
+    owned_badges = []
+    status_rows  = []
+    try:
+        onprem = (_call_onprem('get_profile', global_id=q) or {})
+        if onprem.get('global_id'):
+            profile['global_id'] = onprem['global_id']
+            profile['grade']     = onprem.get('vip_grade', '-')
+            prof = onprem.get('profile', {}) or {}
+            profile['ai_total_score']  = prof.get('lifesync_score', '-')
+            profile['ai_health_score'] = prof.get('health_score', '-')
+            status_rows = [
+                {'label': '그룹사 등록일', 'value': (onprem.get('first_created_dt','-') or '-').split('T')[0], 'sub': '', 'is_state': False},
+                {'label': '최근 갱신일',   'value': (onprem.get('last_updated_dt','-') or '-').split('T')[0], 'sub': '', 'is_state': False},
+                {'label': '고객 상태',     'value': onprem.get('customer_status', '-'), 'sub': '', 'is_state': True},
+                {'label': '고객 유형',     'value': onprem.get('customer_type', '-'), 'sub': '', 'is_state': False},
+            ]
+            owned_badges = [domain_label.get(i.get('domain'), i.get('domain','?')) for i in onprem.get('identities', [])]
+    except Exception:
+        pass
+    try:
+        pii = (_call_onprem('get_pii', global_id=q) or {})
+        name = pii.get('name', '') or ''
+        if name:
+            profile['name_masked'] = name[0] + '*' * (len(name) - 1)
+        mobile = pii.get('mobile', '') or ''
+        if len(mobile) >= 11:
+            profile['phone_masked'] = f"{mobile[:3]}-****-{mobile[-4:]}"
+        profile['gender'] = pii.get('gender', '-') or '-'
+        birth = pii.get('birth_date', '') or ''
+        if birth:
+            try:
+                from datetime import datetime as _dt
+                age = _dt.now().year - int(birth.split('-')[0])
+                profile['age_band'] = f'{(age // 10) * 10}대'
+            except Exception:
+                pass
+        addr = pii.get('address', '') or ''
+        if addr:
+            profile['region'] = addr.split()[0]
+    except Exception:
+        pass
+
+    return render_template('users.html',
+        active='customer', q=q,
+        consent_gate='ok',
+        profile=profile, status_rows=status_rows,
+        consent_badges=consent_badges, owned_badges=owned_badges,
+        topn=[], crosssell=[],
+        nba={'action': '-', 'targets': [], 'response_prob': 0, 'updated_at': '-'},
+        precision=[],
         recent_recommend=[], recent_activity=[],
     )
 
@@ -1182,7 +1330,7 @@ def api_admin_demographic_summary():
     """P3 r13. analytics_demographic_daily 오늘자 — dim prefix 필터 가능."""
     dim = request.args.get('dim')
     prefix = f'{dim}#' if dim else None
-    rows = _ddb_query_today(DDB_DEMOGRAPHIC_TABLE, sk_prefix=prefix)
+    rows = _ddb_query_today(DDB_DEMOGRAPHIC_TABLE, sk_prefix=prefix, sk_attr='demographic_key')
     return jsonify(rows)
 
 
@@ -1209,15 +1357,60 @@ def _stub_aurora_summary():
     if USE_MOCK:
         return MOCKUP_DASH_KPI
 
-    # 운영 단 KPI 9 — 외부 호출 제거 (Aurora private + On-Prem Lambda timeout 으로 SSR 24초 hang 원인)
-    # 안 들어오는 데이터는 '-' 로 비워둠 (사용자 의도). 운영 단계에서 실 호출 복원 시 함수 분리 권장.
     cards = [dict(c, value='-') for c in MOCKUP_DASH_KPI]
 
-    # DDB 최신 update_time 만 가벼운 호출 — 응답 빠름 (item 0 도 OK)
+    # KPI 1~3: On-Prem Lambda (VPN 연결 필요)
+    for idx, action in [(0, 'count_master_customer'), (1, 'count_users'), (2, 'count_users_consented')]:
+        try:
+            c = (_call_onprem(action) or {}).get('count')
+            if c is not None:
+                cards[idx]['value'] = f'{int(c):,}'
+        except Exception:
+            pass
+
+    # KPI 4: AI 추천 상태 — DDB 최신 update_time
     try:
         items = get_dynamo_table().scan(ProjectionExpression='update_time', Limit=1).get('Items', [])
         if items and items[0].get('update_time'):
-            cards[8]['sub'] = f"DynamoDB · 최근 갱신 {items[0]['update_time']}"
+            cards[3]['value'] = 'Vertex AI'
+            cards[3]['sub'] = f"DynamoDB · 최근 갱신 {items[0]['update_time']}"
+    except Exception:
+        pass
+
+    # KPI 5~8: Aurora 추천 통계
+    try:
+        with get_db() as db, db.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) AS total, "
+                "SUM(clicked_flag) AS clicked, "
+                "SUM(purchased_flag) AS purchased "
+                "FROM customer_recommend_history"
+            )
+            r = cur.fetchone()
+            if r and r['total']:
+                cards[4]['value'] = f"{int(r['total']):,}"
+                ctr = (r['clicked'] or 0) / r['total'] * 100
+                cvr = (r['purchased'] or 0) / (r['clicked'] or 1) * 100
+                cards[6]['value'] = f"{ctr:.1f}%"
+                cards[7]['value'] = f"{cvr:.1f}%"
+    except Exception:
+        pass
+
+    try:
+        with get_db() as db, db.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS cnt FROM customer_dashboard_log")
+            r = cur.fetchone()
+            if r:
+                n = int(r['cnt'])
+                cards[5]['value'] = f"{n/1e6:.1f}M" if n >= 1_000_000 else f"{n:,}"
+    except Exception:
+        pass
+
+    # KPI 9: Redis DBSIZE
+    try:
+        rc = _get_redis()
+        if rc:
+            cards[8]['value'] = f"{rc.dbsize():,}"
     except Exception:
         pass
 
@@ -1329,14 +1522,20 @@ def api_cloud_status():
 
 
 def _cloud3_from_aws():
-    """AWS / GCP / On-Prem 3 카드. 안 들어오는 데이터는 '-' 로 비워둠."""
+    """AWS / GCP / On-Prem 3 카드 + 서비스별 details. 안 들어오는 데이터는 '-' 로 비워둠."""
     aws_list = _ping_cloud_status() or []
-    cards = [dict(c, state='-', sub='-') for c in MOCKUP_DASH_CLOUD3]   # 구조 유지, state/sub 빈 값
+    cards = [dict(c, state='-', sub='-', details=[]) for c in MOCKUP_DASH_CLOUD3]
 
     if aws_list:
         up = sum(1 for x in aws_list if x.get('state') == 'UP')
         cards[0]['state'] = f'{up} / {len(aws_list)} 정상'
         cards[0]['sub']   = ' · '.join(x['service'].replace('AWS ', '') for x in aws_list[:6])
+        cards[0]['details'] = [
+            {'name': x.get('service', '?').replace('AWS ', ''),
+             'state': x.get('state', '?'),
+             'note':  x.get('note', '-')}
+            for x in aws_list
+        ]
 
     # GCP — stub 응답 (자격증명 없으면 빈 dict → state '-' 유지)
     gcp = _stub_gcp_status() or {}
@@ -1344,7 +1543,48 @@ def _cloud3_from_aws():
         cards[1]['state'] = gcp['state']
         cards[1]['sub']   = gcp.get('note', '-')
 
-    # On-Prem — PrivateAPI ping (미구현) → state '-' 유지
+    # On-Prem — VM 단위 묶음: vm:ls-* + 그 위 service 합산 (DOWN 하나라도 있으면 DOWN)
+    try:
+        lab    = _call_onprem('local_lab_status') or {}
+        checks = lab.get('checks', {}) or {}
+        envs   = lab.get('environments', []) or []
+        vm_specs = [
+            ('ls-db',    'MySQL',        'vm:ls-db',    'service:mysql'),
+            ('ls-token', 'Tokenization', 'vm:ls-token', 'service:tokenization'),
+            ('ls-api',   'PrivateAPI',   'vm:ls-api',   None),
+        ]
+        rows = []
+        for vm_id, svc_name, vm_key, svc_key in vm_specs:
+            vm  = (checks.get(vm_key)  or [{}])[0] if checks.get(vm_key)  else {}
+            svc = (checks.get(svc_key) or [{}])[0] if svc_key and checks.get(svc_key) else {}
+            statuses = [s for s in (vm.get('status'), svc.get('status')) if s]
+            if any(s == 'fail' for s in statuses):
+                state = 'DOWN'
+            elif any(s == 'warn' for s in statuses):
+                state = 'WARN'
+            elif statuses:
+                state = 'UP'
+            else:
+                state = 'WARN'
+            ip      = (vm.get('observedValue', '') or '').split(':')[0] or '-'
+            note_sv = svc.get('observedValue', '') or ''
+            # svc observedValue 가 http URL / ip:port (중복) 면 ip 만, 그 외 (예: '11 tables') 는 ip · note
+            if note_sv and not note_sv.startswith('http') and not note_sv.startswith(ip):
+                note = f'{ip} · {note_sv}'
+            else:
+                note = ip
+            rows.append({
+                'name':  f'{vm_id} ({svc_name})',
+                'state': state,
+                'note':  note,
+            })
+        if rows:
+            up = sum(1 for r in rows if r['state'] == 'UP')
+            cards[2]['state']   = f'{up} / {len(rows)} 정상'
+            cards[2]['sub']     = ' · '.join(e.get('env', '?').split('·')[-1].strip() for e in envs[:3]) or '-'
+            cards[2]['details'] = rows
+    except Exception:
+        pass
     return cards
 
 
@@ -1373,17 +1613,16 @@ _BADGE_MAP = {
 
 
 def _uploads_from_s3(limit=10):
-    """S3 raw bucket 최근 업로드 N건 — `list_objects_v2` 변환 → uploads 표 schema."""
+    """S3 raw bucket 최근 업로드 N건 — 도메인 prefix 별 MaxKeys=50 후 합산 정렬."""
     raw_bucket = os.environ.get('LIFESYNC_RAW_S3_BUCKET', '')
     if not raw_bucket:
         return MOCKUP_DASH_RECENT_UPLOADS
     try:
         s3 = _boto('s3')
-        paginator = s3.get_paginator('list_objects_v2')
         objs = []
-        for page in paginator.paginate(Bucket=raw_bucket):
-            for o in page.get('Contents', []):
-                objs.append(o)
+        for prefix in _RAW_DOMAIN_PREFIXES:
+            resp = s3.list_objects_v2(Bucket=raw_bucket, Prefix=prefix, MaxKeys=50)
+            objs.extend(resp.get('Contents', []))
         objs.sort(key=lambda o: o['LastModified'], reverse=True)
         out = []
         for o in objs[:limit]:
@@ -1460,19 +1699,81 @@ def api_ai_chart_trend():
     return render_template('_chart_ai_trend.j2', trend_7d=trend)
 
 
+def _aurora_category_ctr_donut():
+    """카테고리별 추천/클릭/CTR — recent 7d. V6 R19."""
+    try:
+        with get_db() as db, db.cursor() as cur:
+            cur.execute(
+                "SELECT cat.category_code AS label, "
+                "       COUNT(*) AS recommended, "
+                "       SUM(r.clicked_flag='Y') AS clicked, "
+                "       ROUND(SUM(r.clicked_flag='Y') * 100.0 / COUNT(*), 1) AS ctr "
+                "FROM customer_recommend_history r "
+                "JOIN product_master p    ON r.product_id  = p.product_id "
+                "JOIN category_master cat ON p.category_id = cat.category_id "
+                "WHERE r.recommended_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY) "
+                "GROUP BY cat.category_code "
+                "ORDER BY recommended DESC "
+                "LIMIT 10"
+            )
+            return cur.fetchall()
+    except Exception:
+        return []
+
+
 @app.route('/api/ai/chart/donut')
 @login_required
 def api_ai_chart_donut():
-    """카테고리별 도넛 SVG fragment. 운영 호출은 Aurora category_master GROUP BY — 미구현 시 빈 차트."""
-    cat = MOCKUP_AI_CAT_DONUT if USE_MOCK else []
+    """카테고리별 도넛 SVG fragment."""
+    cat = MOCKUP_AI_CAT_DONUT if USE_MOCK else _aurora_category_ctr_donut()
     return render_template('_chart_ai_donut.j2', cat_donut=cat)
+
+
+def _ai_age_perf_2step():
+    """연령대별 추천 성과 — On-Prem age_band → Aurora history 2-step. V6 R20."""
+    try:
+        result = _call_onprem('list_by_age_band') or {}
+        age_groups = result.get('age_groups', {})
+        if not age_groups:
+            return []
+        out = []
+        with get_db() as db, db.cursor() as cur:
+            for age_band in ['20s', '30s', '40s', '50s', '60s+']:
+                gids = age_groups.get(age_band, [])
+                if not gids:
+                    out.append({'age_band': age_band, 'recommended': 0,
+                                'clicked': 0, 'purchased': 0, 'ctr': 0, 'cvr': 0})
+                    continue
+                placeholders = ','.join(['%s'] * len(gids))
+                cur.execute(
+                    f"SELECT COUNT(*) AS recommended, "
+                    f"       SUM(clicked_flag='Y') AS clicked, "
+                    f"       SUM(purchased_flag='Y') AS purchased "
+                    f"FROM customer_recommend_history "
+                    f"WHERE global_id IN ({placeholders}) "
+                    f"  AND recommended_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)",
+                    tuple(gids)
+                )
+                row = cur.fetchone() or {}
+                rec = row.get('recommended', 0) or 0
+                clk = row.get('clicked', 0) or 0
+                pur = row.get('purchased', 0) or 0
+                out.append({
+                    'age_band': age_band,
+                    'recommended': rec, 'clicked': clk, 'purchased': pur,
+                    'ctr': round(clk * 100.0 / rec, 1) if rec else 0,
+                    'cvr': round(pur * 100.0 / clk, 1) if clk else 0,
+                })
+        return out
+    except Exception:
+        return []
 
 
 @app.route('/api/ai/chart/age')
 @login_required
 def api_ai_chart_age():
-    """연령대별 추천 성과 진행바. 운영 호출은 On-Prem + Aurora JOIN — 미구현 시 빈 차트."""
-    age = MOCKUP_AI_AGE_PERF if USE_MOCK else []
+    """연령대별 추천 성과 진행바."""
+    age = MOCKUP_AI_AGE_PERF if USE_MOCK else _ai_age_perf_2step()
     return render_template('_chart_ai_age.j2', age_perf=age)
 
 
@@ -1549,9 +1850,9 @@ def _profile_full_mock(global_id):
             'profile': {
                 'lifesync_score': float(score.get('dynamic_score', 0) or 0),
                 'health_score':   float(score.get('health_score', 0)   or 0),
-                'finance_score':  float(score.get('fin_score', 0)      or 0),
-                'asset_score':    75.0,
-                'risk_score':     12.0,
+                'finance_score':  float(score.get('finance_score', 0)  or 0),
+                'asset_score':    float(score.get('asset_score', 75.0) or 75.0),
+                'risk_score':     float(score.get('risk_score', 12.0)  or 12.0),
                 'last_calc_dt':   score.get('update_time', ''),
             },
         },
