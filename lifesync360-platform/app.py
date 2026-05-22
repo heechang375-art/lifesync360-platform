@@ -627,7 +627,9 @@ def _fetch_products(cur, cached_ids, cat_list, dynamic_score, grade, consented_d
     (cache hit 분기는 그대로 — 캐시는 이미 동의 필터링된 결과 가정, TTL 6h 안에서만 stale)"""
     consent_where = ""
     consent_params = []
-    if consented_domains:
+    if consented_domains is not None:
+        if not consented_domains:
+            return []  # 동의 도메인 0개 → 추천 0개 (fail-closed)
         cph = ', '.join(['%s'] * len(consented_domains))
         consent_where  = f" AND c.company_code IN ({cph})"
         consent_params = list(consented_domains)
@@ -743,13 +745,16 @@ def api_recommendations(payload):
 
     # 동의 조회 (cache → live → ddb_fallback → none)
     consented_domains, consent_source = _get_consents_with_fallback(global_id, ddb_has_row)
-    if consent_source == 'none':
+    if consent_source == 'none' or not consented_domains:
+        msg = ('동의 정보를 확인할 수 없습니다. 잠시 후 다시 시도해주세요.'
+               if consent_source == 'none'
+               else '동의한 계열사가 없어 추천 상품이 없습니다. 설정에서 동의를 등록해주세요.')
         return jsonify({
             'meta'    : {'grade': grade, 'score': dynamic_score, 'health': health_score,
                          'vip_prob': vip_prob, 'next_best_action': nba,
-                         'consent_source': 'none'},
+                         'consent_source': consent_source},
             'products': [],
-            'message' : '동의 정보를 확인할 수 없습니다. 잠시 후 다시 시도해주세요.',
+            'message' : msg,
         })
 
     cached_ids = _fetch_redis_cached_ids(global_id)
