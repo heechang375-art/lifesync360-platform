@@ -17,34 +17,31 @@
         }
       ],
       "environment": [
-        { "name": "AWS_REGION",    "value": "ap-northeast-2" },
-        { "name": "DB_NAME",       "value": "lifesync360" },
-        { "name": "DYNAMO_TABLE",  "value": "lifesync_customer_result" },
-        { "name": "REDIS_PORT",    "value": "6379" },
-        { "name": "USE_MOCK",              "value": "false" },
-        { "name": "PROFILE_SYNC_LAMBDA",  "value": "customer-profile-sync" },
-        { "name": "ONPREM_QUERY_LAMBDA",  "value": "lifesync-onprem-customer-query" }
+        { "name": "AWS_REGION",          "value": "ap-northeast-2" },
+        { "name": "DB_NAME",             "value": "lifesync360" },
+        { "name": "DYNAMO_TABLE",        "value": "lifesync_customer_result" },
+        { "name": "REDIS_HOST",          "value": "lif-re-159z02paucc59.lkjrak.0001.apn2.cache.amazonaws.com" },
+        { "name": "REDIS_PORT",          "value": "6379" },
+        { "name": "USE_MOCK",            "value": "false" },
+        { "name": "PROFILE_SYNC_LAMBDA", "value": "customer-profile-sync" },
+        { "name": "ONPREM_QUERY_LAMBDA", "value": "lifesync-onprem-customer-query" }
       ],
       "secrets": [
         {
           "name": "JWT_SECRET",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:ecs-jwt-signing-hDXOQc:jwt::"
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:ecs-jwt-signing-QpgPth:jwt::"
         },
         {
           "name": "DB_USER",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:/lifesync/dev/db/master-S8ZoCX:DB_USER::"
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:/lifesync/dev/db/master-VuWPpu:username::"
         },
         {
           "name": "DB_PASS",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:/lifesync/dev/db/master-S8ZoCX:DB_PASS::"
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:/lifesync/dev/db/master-VuWPpu:password::"
         },
         {
           "name": "AURORA_HOST",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:/lifesync/dev/db/master-S8ZoCX:AURORA_HOST::"
-        },
-        {
-          "name": "REDIS_HOST",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:/lifesync/dev/db/master-S8ZoCX:REDIS_HOST::"
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:/lifesync/dev/db/master-VuWPpu:host::"
         }
       ],
       "logConfiguration": {
