@@ -53,7 +53,7 @@ def get_aesgcm():
         if not key_b64:
             secret  = boto3.client('secretsmanager', region_name=REGION).get_secret_value(SecretId=SECRET_ID)
             key_b64 = json.loads(secret['SecretString'])['token_aes_key_b64']
-        _aesgcm = AESGCM(base64.b64decode(key_b64))
+        _aesgcm = AESGCM(base64.urlsafe_b64decode(key_b64))
     return _aesgcm
 
 def encrypt_pii(value):
