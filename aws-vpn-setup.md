@@ -90,9 +90,9 @@ config setup
 
 conn aws-vpn
     authby=secret
-    left=<브리지 어댑터 IP>        # %defaultroute 대신 명시 (ex: 172.16.1.73)
+    left=<브리지 어댑터 IP>        # %defaultroute 대신 명시 (ex: 192.168.45.157)
     leftid=<공유기 공인IP>          # curl ifconfig.me 값, AWS Customer Gateway에 등록된 IP
-    leftsubnet=<로컬 브리지 CIDR>   # ex) 192.168.0.0/24
+    leftsubnet=<로컬 브리지 CIDR>   # ex) 192.168.45.0/24
     right=<AWS VPN 터널IP>
     rightsubnet=<AWS VPC CIDR>      # ex) 10.0.0.0/16
     ike=aes256-sha256-modp2048
@@ -188,7 +188,8 @@ sudo tcpdump -i <브리지인터페이스> udp port 500 or udp port 4500 -n
 - [x] VPN 터널 연결 확인 (ESTABLISHED)
 - [x] Ansible Control Node까지 통신 확인
 - [x] DPD + SA lifetime 설정 (간헐적 끊김 방지)
-- [ ] 다중 연결 구성 (Lambda 2개 추가) ← **다음 단계**
+- [x] Lambda VPC → TGW 부착 + 라우팅 구성 (2026-05-23)
+- [x] 공유기 교체 후 Private API IP 변경 대응 (2026-05-23)
 
 ---
 
@@ -240,7 +241,7 @@ sudo nano /etc/frr/daemons
 ```
 VPC → Site-to-Site VPN Connections → Create
 → Routing Options: Static 선택
-→ Static IP Prefixes: 172.16.1.73/32 입력
+→ Static IP Prefixes: 192.168.45.0/24 입력  # 공유기 브리지 대역 전체 (변경 가능)
 → Customer Gateway: 기존 것 선택
 → Transit Gateway 연결
 ```
@@ -250,9 +251,9 @@ VPC → Site-to-Site VPN Connections → Create
 ### 문제 4: leftsubnet CIDR이 GCP 대역과 충돌 가능성
 브리지 어댑터가 Wi-Fi라 IP 변경 불가 (공유기 DHCP에서 받아오는 구조)
 
-**해결:** leftsubnet을 /24 대신 /32로 단일 IP 지정
+**해결:** leftsubnet을 /24 대신 /32로 단일 IP 지정 (초기 구성 시)
 ```conf
-leftsubnet=172.16.1.73/32    # /24 → /32 변경
+leftsubnet=172.16.1.73/32    # 초기 설정 — 이후 공유기 교체로 IP 변경됨 (아래 변경 이력 참고)
 ```
 AWS Transit Gateway + Management VPC 라우팅 테이블도 /32로 변경
 → Longest Prefix Match 원칙으로 GCP 대역보다 우선 라우팅됨
@@ -508,3 +509,53 @@ VPN 터널이 ESTABLISHED 되었으나 Ansible EC2 Private IP까지 통신이 �
    → Security Groups → Inbound Rules
    → 로컬 브리지 CIDR에서 오는 SSH(22), ICMP 허용 여부 확인
    ```
+
+---
+
+## 변경 이력
+
+### 2026-05-23 — 공유기 교체 후 Private API 서버 IP 변경 대응
+
+**변경 배경:**  
+학원 공유기 교체로 VirtualBox 브리지 어댑터 IP가 변경됨.  
+Private API 서버의 브리지 NIC IP: `172.16.1.73` → `192.168.45.157`
+
+**AWS 측 변경 사항:**
+
+| 항목 | 변경 전 | 변경 후 |
+|------|---------|---------|
+| Lambda `PRIVATE_API_URL` | `http://172.16.1.73:80` | `http://192.168.45.157:80` |
+| Lambda VPC TGW 부착 | 없음 | `tgw-attach-04c5657d93f2fe920` |
+| Lambda 서브넷 라우트 | `192.168.45.0/24` 없음 | `192.168.45.0/24` → TGW |
+| Lambda SG Egress | `172.16.1.0/24:80` 만 있음 | `192.168.45.0/24:80` 추가 |
+| TGW 라우트 (`tgw-rtb-05da340fa6bc057c7`) | `192.168.45.0/24` → VPN만 있음 | `10.0.0.0/16` (Lambda VPC) propagated 추가됨 |
+
+**온프레미스 측 변경 사항 (ipsec.conf):**
+
+```conf
+# 변경 전
+left=172.16.1.73
+leftsubnet=172.16.1.73/32
+
+# 변경 후
+left=192.168.45.157
+leftsubnet=192.168.45.157/32  # 또는 192.168.45.0/24
+```
+
+VPN 재시작:
+```bash
+sudo systemctl restart strongswan-starter
+sudo ipsec status  # ESTABLISHED 확인
+```
+
+**검증 결과:**
+
+```bash
+# Lambda → 온프레미스 Private API 연결 확인
+aws lambda invoke --function-name lifesync-onprem-customer-query \
+  --payload '{"action":"count_users"}' out.json
+# → {"status": "ACTIVE", "count": 294277}  ✅
+
+# VPN 터널 상태
+# 43.201.181.136: UP  /  13.125.57.64: DOWN (이중화 중 1개 UP → 정상)
+```

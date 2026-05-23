@@ -33,15 +33,15 @@
         },
         {
           "name": "DB_USER",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:/lifesync/dev/db/master-VuWPpu:username::"
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:/lifesync/dev/db/master-2Q28JC:username::"
         },
         {
           "name": "DB_PASS",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:/lifesync/dev/db/master-VuWPpu:password::"
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:/lifesync/dev/db/master-2Q28JC:password::"
         },
         {
           "name": "AURORA_HOST",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:/lifesync/dev/db/master-VuWPpu:host::"
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:/lifesync/dev/db/master-2Q28JC:host::"
         }
       ],
       "logConfiguration": {

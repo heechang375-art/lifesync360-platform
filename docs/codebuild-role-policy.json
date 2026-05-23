@@ -31,9 +31,9 @@
             "Effect": "Allow",
             "Action": [
                 "ecs:RegisterTaskDefinition",
+                "ecs:DescribeTaskDefinition",
                 "ecs:UpdateService",
-                "ecs:DescribeServices",
-                "ecs:DescribeTaskDefinition"
+                "ecs:DescribeServices"
             ],
             "Resource": "*"
         },
