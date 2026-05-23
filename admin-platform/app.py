@@ -1,10 +1,7 @@
 import os
 import functools
 import json
-import random
-import threading
 import time
-from collections import deque
 from datetime import datetime, timezone, timedelta
 
 import boto3
@@ -1608,8 +1605,6 @@ def ai():
 
 
 # ── 신규 admin JSON API — analytics batch 결과 read ─────────────
-from flask import jsonify  # noqa: E402
-
 @app.route('/api/admin/recommend-trend')
 @login_required
 def api_admin_recommend_trend():

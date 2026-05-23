@@ -1,7 +1,5 @@
 import os
 import datetime
-import hashlib
-import uuid
 import json as _json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timezone
@@ -15,24 +13,8 @@ app = Flask(__name__)
 JWT_SECRET          = os.environ.get('JWT_SECRET')
 if not JWT_SECRET:
     raise RuntimeError('JWT_SECRET 환경변수 누락 — IaC env 주입 확인 필요')
-USE_MOCK            = os.environ.get('USE_MOCK', 'true').lower() != 'false'
-PROFILE_SYNC_LAMBDA  = os.environ.get('PROFILE_SYNC_LAMBDA', '')
 ONPREM_QUERY_LAMBDA  = os.environ.get('ONPREM_QUERY_LAMBDA', 'lifesync-onprem-customer-query')
 AWS_REGION           = os.environ.get('AWS_REGION', 'ap-northeast-2')
-
-# mock_data는 항상 import (인증 + USE_MOCK 분기 둘 다에서 사용)
-from mock_data import (
-    MOCK_USERS, MOCK_RECOMMENDATIONS, PRODUCTS_MAP, get_mock_health,
-)
-
-COMPANIES = [
-    {'key': 'BANK',       'name': 'LS 은행'},
-    {'key': 'CARD',       'name': 'LS 카드'},
-    {'key': 'INSURANCE',  'name': 'LS 보험'},
-    {'key': 'SECURITIES', 'name': 'LS 증권'},
-    {'key': 'HEALTHCARE', 'name': 'LS 헬스케어'},
-    {'key': 'HOSPITAL',   'name': 'LS 병원'},
-]
 
 CONSENTS = [
     {
@@ -131,9 +113,7 @@ _dynamo = None
 def get_redis():
     global _redis
     if _redis is None:
-        host = os.environ.get('REDIS_HOST','lif-re-1sqfju15n8thy')
-        if not host:
-            raise RuntimeError('REDIS_HOST 환경변수가 설정되지 않았습니다.')
+        host = os.environ.get('REDIS_HOST', 'lif-re-1sqfju15n8thy')
         _redis = redis.Redis(host=host, port=int(os.environ.get('REDIS_PORT', '6379')), decode_responses=True)
     return _redis
 
@@ -180,23 +160,6 @@ def _get_lambda():
         _lambda_client = boto3.client('lambda', region_name=AWS_REGION)
     return _lambda_client
 
-def _resolve_global_id(ls_user_id, email):
-    if not PROFILE_SYNC_LAMBDA:
-        return None
-    try:
-        resp = _get_lambda().invoke(
-            FunctionName=PROFILE_SYNC_LAMBDA,
-            InvocationType='RequestResponse',
-            Payload=_json.dumps({'ls_user_id': ls_user_id, 'email': email}),
-        )
-        result = _json.loads(resp['Payload'].read())
-        if result.get('statusCode') == 200:
-            return _json.loads(result['body'])['global_id']
-    except Exception:
-        pass
-    return None
-
-
 # ── JWT ───────────────────────────────────────────────
 def make_jwt(ls_user_id, global_id):
     payload = {
@@ -231,13 +194,6 @@ def api_login():
     email    = data.get('email', '')
     password = data.get('password', '')
 
-    if USE_MOCK:
-        user = MOCK_USERS.get(email)
-        if not user or hashlib.sha256(password.encode('utf-8')).hexdigest() != user['password_hash']:
-            return jsonify({'error': '이메일 또는 비밀번호가 올바르지 않습니다.'}), 401
-        token = make_jwt(user['ls_user_id'], user['global_id'])
-        return jsonify({'token': token, 'ls_user_id': user['ls_user_id']})
-
     try:
         result = _call_onprem('login', email=email, password=password)
     except Exception as e:
@@ -265,34 +221,6 @@ def api_login():
 @app.route('/api/me')
 @require_jwt
 def api_me(payload):
-    if USE_MOCK:
-        user = next((u for u in MOCK_USERS.values() if u['ls_user_id'] == payload['sub']), None)
-        if not user:
-            return jsonify({'error': 'user not found'}), 404
-        return jsonify({
-            'ls_user_id': payload['sub'],
-            'global_id':  payload['gid'],
-            'name':       user['name'],
-            'grade':      user['grade'],
-            'email':      user['email'],
-            # 인구통계 (customer_360_profile)
-            'gender':        user.get('gender'),
-            'age_band':      user.get('age_band'),
-            'region':        user.get('region'),
-            'income_grade':  user.get('income_grade'),
-            'asset_grade':   user.get('asset_grade'),
-            'wearable_flag': user.get('wearable_flag'),
-            # 마스터 (master_customer)
-            'customer_status':  user.get('customer_status'),
-            'vip_grade':        user.get('vip_grade'),
-            'customer_type':    user.get('customer_type'),
-            'first_created_dt': user.get('first_created_dt'),
-            'last_login_dt':    user.get('last_login_dt'),
-        })
-
-    # Mock 유저 fallback 준비 (Lambda 미배포 검증용)
-    _mock_user = next((u for u in MOCK_USERS.values() if u['ls_user_id'] == payload['sub']), None)
-
     global_id = payload['gid']
 
     with ThreadPoolExecutor(max_workers=4) as pool:
@@ -307,8 +235,7 @@ def api_me(payload):
             login_email = user.get('login_email')
             global_id   = user.get('global_id', global_id)
         except Exception:
-            if _mock_user:
-                login_email = _mock_user.get('email')
+            pass
 
         grade = None
         try:
@@ -326,8 +253,7 @@ def api_me(payload):
         try:
             name = fut_pii.result().get('name')
         except Exception:
-            if _mock_user:
-                name = _mock_user.get('name')
+            pass
 
     consents = onprem.get('consents', []) if onprem else []
     profile  = ((onprem or {}).get('customer') or {}).get('profile') or {}
@@ -351,10 +277,7 @@ def api_me(payload):
 @app.route('/api/consent', methods=['POST'])
 @require_jwt
 def api_consent(payload):
-    if USE_MOCK:
-        return jsonify({'status': 'ok'})
-
-    consents = request.get_json().get('consents', [])
+    consents = (request.get_json() or {}).get('consents', [])
     try:
         _call_onprem('save_consent', global_id=payload['gid'], consents=consents)
     except ValueError as e:
@@ -393,9 +316,6 @@ def api_event(payload):
       banner_click         → MAIN  + banner_click='Y'
       tab_click            → MAIN
     """
-    if USE_MOCK:
-        return jsonify({'status': 'ok'})
-
     data        = request.get_json() or {}
     event_type  = data.get('event_type', '')
     product_id  = data.get('product_id')
@@ -515,35 +435,6 @@ _NBA_TO_ACTION = {
     'WELLNESS':          'RECOMMEND_WELLNESS',
     'TELEMED':           'RECOMMEND_TELEMED',
 }
-
-
-def _recommendations_mock():
-    flat = []
-    for rec in MOCK_RECOMMENDATIONS:
-        for p in rec.get('products', []):
-            flat.append({
-                'product_id'   : p.get('id'),
-                'product_code' : p.get('id'),
-                'product_name' : p.get('name'),
-                'description'  : p.get('desc', ''),
-                'category_code': (rec.get('key') or '').upper(),
-                'category_name': rec.get('name', ''),
-                'company_code' : (rec.get('key') or '').upper(),
-                'company_name' : rec.get('name', ''),
-                'risk_level'   : p.get('tag', ''),
-                'target_grade' : p.get('type', ''),
-                'priority_rank': 0,
-            })
-    flat = flat[:20]
-    for i, p in enumerate(flat):
-        p['reason']               = f'VIP 등급 + {p.get("category_name","")} 카테고리 매칭'
-        p['rec_rank']             = i + 1
-        p['recommendation_score'] = max(60, 95 - i * 4)
-    return {
-        'meta'    : {'grade': 'VIP', 'score': 90.0, 'health': 88.0,
-                     'vip_prob': 0.85, 'next_best_action': 'PB'},
-        'products': flat,
-    }
 
 
 def _ddb_get_latest(global_id):
@@ -737,9 +628,6 @@ def api_recommendations(payload):
       ⑤ category별 product_master 매칭 (각 카테고리당 top 2, 합쳐서 LIMIT 20)
       ⑥ customer_recommend_history INSERT + Redis 캐시 갱신
     """
-    if USE_MOCK:
-        return jsonify(_recommendations_mock())
-
     global_id = payload['gid']
     grade, dynamic_score, health_score, vip_prob, nba, ddb_has_row = _fetch_ddb_meta(global_id)
 
@@ -811,20 +699,6 @@ def api_my_applications(payload):
     내 신청 내역 — customer_product_application + product/company JOIN.
     status (RECEIVED/IN_REVIEW/APPROVED/REJECTED/CANCELED) + 상품 정보.
     """
-    if USE_MOCK:
-        # 시연용 mock — 최근 신청 3건 가정
-        return jsonify([
-            {'application_id':'APP-20260517100000-AABBCC','product_code':'HLT-HEALTHCARE-00012-03',
-             'product_name':'VIP 종합 건강검진','company_name':'LS 헬스케어','category_name':'헬스케어',
-             'status':'IN_REVIEW','created_at':'2026-05-17 10:00:00'},
-            {'application_id':'APP-20260515143020-AABBCC','product_code':'INS-INSURANCE-00045-02',
-             'product_name':'프리미엄 실손 보험','company_name':'LS 보험','category_name':'보험',
-             'status':'APPROVED','created_at':'2026-05-15 14:30:20'},
-            {'application_id':'APP-20260510091505-AABBCC','product_code':'BANK-DEPOSIT-00001-01',
-             'product_name':'PB 우대 정기예금 12개월','company_name':'LS 은행','category_name':'예금',
-             'status':'RECEIVED','created_at':'2026-05-10 09:15:05'},
-        ])
-
     db = get_db()
     try:
         with db.cursor() as cur:
@@ -858,7 +732,6 @@ def health():
         'status': 'ok',
         'jwt_from_env': bool(os.environ.get('JWT_SECRET')),
         'jwt_len':      len(JWT_SECRET),
-        'use_mock':     USE_MOCK,
         'dynamo_table': os.environ.get('DYNAMO_TABLE', 'NOT_SET'),
     }
 
@@ -866,10 +739,6 @@ def health():
 @app.route('/api/dashboard')
 @require_jwt
 def api_dashboard(payload):
-    if USE_MOCK:
-        h = get_mock_health(payload['sub'])
-        return jsonify({**h, 'no_data': False})
-
     item = _ddb_get_latest(payload['gid'])
     if not item:
         return jsonify({'no_data': True})
@@ -898,12 +767,6 @@ def settings():
 
 @app.route('/product/<product_code>')
 def product(product_code):
-    if USE_MOCK:
-        item = PRODUCTS_MAP.get(product_code)
-        if not item:
-            return redirect(url_for('dashboard'))
-        return render_template('product.html', item=item)
-
     db = get_db()
     try:
         with db.cursor() as cur:
@@ -943,14 +806,6 @@ def product(product_code):
 @app.route('/product/<product_code>/apply')
 def product_apply(product_code):
     """상품 신청 페이지 — product.html '신청하기' 클릭 시 이동."""
-    if USE_MOCK:
-        m = PRODUCTS_MAP.get(product_code)
-        if not m:
-            return redirect(url_for('dashboard'))
-        item = {'id': product_code, 'name': m['name'], 'desc': m.get('desc', ''),
-                'category': m.get('category', ''), 'product_id': None}
-        return render_template('apply.html', item=item)
-
     db = get_db()
     try:
         with db.cursor() as cur:
@@ -989,14 +844,10 @@ def api_product_apply(product_code, payload):
     INSERT 시점에는 4컬럼 (status default 'RECEIVED', 나머지 자동/NULL).
     컨택 정보(이름/전화/금액/메모/마케팅동의) 는 별도 시스템 책임 — Aurora 미저장.
     """
-    if USE_MOCK:
-        application_id = f"APP-{datetime.datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{payload['sub'][-6:]}"
-        return jsonify({'status': 'ok', 'application_id': application_id})
-
     db = get_db()
     try:
         with db.cursor() as cur:
-            # 온프레미스 users 테이블에서 실제 ls_user_id 조회 (JWT mock 값과 다를 수 있음)
+            # JWT sub보다 온프레미스 users 테이블의 ls_user_id가 권위적 — 재조회
             real_ls_user_id = payload['sub']
             try:
                 u = _call_onprem('get_user_by_global', global_id=payload['gid'])
@@ -1049,8 +900,9 @@ def api_product_apply(product_code, payload):
                 (payload['gid'], product_id, application_id)
             )
         db.commit()
-    except Exception as e:
-        return jsonify({'error': f'신청 처리 실패: {str(e)}'}), 500
+    except Exception:
+        app.logger.exception('apply failed (gid=%s, product=%s)', payload['gid'], product_code)
+        return jsonify({'error': '신청 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.'}), 500
     finally:
         db.close()
 

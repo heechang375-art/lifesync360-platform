@@ -100,6 +100,12 @@ conn aws-vpn
     keyingtries=%forever
     keyexchange=ikev2
     forceencaps=yes                 # NAT 환경 필수 (공유기 뒤에 있을 경우)
+    dpdaction=restart               # 피어 무응답 시 즉시 재협상
+    dpddelay=10s                    # 10초마다 DPD keepalive 전송
+    dpdtimeout=30s                  # 30초 내 응답 없으면 재시작
+    ikelifetime=7800s               # AWS Phase1 기본(28800s)보다 짧게 — StrongSwan이 먼저 재협상
+    lifetime=3300s                  # AWS Phase2 기본(3600s)보다 짧게
+    margintime=300s                 # 만료 5분 전부터 재협상 시작 (끊김 없는 rekeying)
     auto=start
 ```
 
@@ -181,6 +187,7 @@ sudo tcpdump -i <브리지인터페이스> udp port 500 or udp port 4500 -n
 - [x] ipsec.conf / ipsec.secrets 설정
 - [x] VPN 터널 연결 확인 (ESTABLISHED)
 - [x] Ansible Control Node까지 통신 확인
+- [x] DPD + SA lifetime 설정 (간헐적 끊김 방지)
 - [ ] 다중 연결 구성 (Lambda 2개 추가) ← **다음 단계**
 
 ---

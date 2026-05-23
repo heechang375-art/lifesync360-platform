@@ -31,8 +31,6 @@ PlatformTaskDef:
           - { Name: DB_NAME,              Value: lifesync360 }
           - { Name: DYNAMO_TABLE,         Value: lifesync_customer_result }
           - { Name: REDIS_PORT,           Value: '6379' }
-          - { Name: USE_MOCK,             Value: 'false' }
-          - { Name: PROFILE_SYNC_LAMBDA,  Value: customer-profile-sync }
           - { Name: ONPREM_QUERY_LAMBDA,  Value: lifesync-onprem-customer-query }
         Secrets:
           - Name: JWT_SECRET
@@ -161,7 +159,6 @@ EcsPlatformTaskRole:
               Action: lambda:InvokeFunction
               Resource:
                 - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:lifesync-onprem-customer-query'
-                - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:customer-profile-sync'
 ```
 
 ## 5. Task Role (admin)
