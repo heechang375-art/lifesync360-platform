@@ -27,19 +27,21 @@
 <div class="page-title">Network & Connectivity</div>
 <div class="page-sub">멀티 클라우드 + 온프레미스 네트워크 상태 + AWS · GCP · On-Prem</div>
 
-<!-- AWS 3 VPC -->
+<!-- AWS 5 VPC -->
 <section class="section">
-    <div class="section-title">📦 AWS VPC <span class="pipe">|</span> <span class="sub">Platform · Data · Group VM</span><span class="ts" id="ts-ops-vpc">갱신: --:--:--</span></div>
-    <div class="grid grid-3">
+    <div class="section-title">📦 AWS VPC <span class="pipe">|</span> <span class="sub">Platform · Wearable · Data · Group VM · Management</span><span class="ts" id="ts-ops-vpc">갱신: --:--:--</span></div>
+    <div class="grid grid-5">
         {{ vpc_card(net_platform, 'pf') }}
+        {{ vpc_card(net_wearable, 'we') }}
         {{ vpc_card(net_data, 'dt') }}
         {{ vpc_card(net_groupvm, 'gvm') }}
+        {{ vpc_card(net_management, 'mgmt') }}
     </div>
 </section>
 
 <!-- AWS Connectivity / GCP / On-Prem -->
 <section class="section">
-    <div class="section-title">🔗 Connectivity · GCP · On-Prem <span class="pipe">|</span> <span class="sub">TGW · VPN · Local Lab</span><span class="ts" id="ts-ops-conn">갱신: --:--:--</span></div>
+    <div class="section-title">🔗 연결 현황 · GCP · 온프레미스 <span class="pipe">|</span> <span class="sub">TGW · VPN · Local Lab</span><span class="ts" id="ts-ops-conn">갱신: --:--:--</span></div>
     <div class="grid grid-3">
         {{ vpc_card(net_conn, 'cn') }}
         {{ vpc_card(net_gcp, 'gcp') }}
@@ -49,7 +51,7 @@
 
 <!-- WEARABLE 실시간 — KPI 4 (활성 / 송신율 / RED / YELLOW) -->
 <section class="section">
-    <div class="section-title">❤ WEARABLE 실시간 <span class="pipe">|</span> <span class="sub">(KINESIS · SSE 1s)</span><span class="ts" id="ts-we-kpi">갱신: --:--:--</span></div>
+    <div class="section-title">❤ 웨어러블 실시간 <span class="pipe">|</span> <span class="sub">(Kinesis · SSE 1s)</span><span class="ts" id="ts-we-kpi">갱신: --:--:--</span></div>
     <div class="grid grid-4">
         {% for k in wearable_kpi %}
         <div class="kpi" style="border-left-color: {{ k.accent }};">
@@ -63,7 +65,7 @@
 
 <!-- 🔴 건강 RED — AHA/WHO 임상 임계 위반 (즉시 조치) -->
 <section class="section">
-    <div class="section-title" style="color:#dc2626;">🔴 건강 RED <span class="pipe">|</span> <span class="sub">AHA/WHO 임상 임계 — 즉시 조치</span><span class="ts" id="ts-we-red">갱신: --:--:--</span></div>
+    <div class="section-title" style="color:#dc2626;">🔴 건강 위험 <span class="pipe">|</span> <span class="sub">AHA/WHO 임상 임계 — 즉시 조치</span><span class="ts" id="ts-we-red">갱신: --:--:--</span></div>
     <div class="table-wrap">
         <table>
             <thead><tr>
@@ -94,7 +96,7 @@
 
 <!-- 🟡 건강 YELLOW — 경계 영역 (모니터링) -->
 <section class="section">
-    <div class="section-title" style="color:#d97706;">🟡 건강 YELLOW <span class="pipe">|</span> <span class="sub">경계 영역 — 모니터링</span><span class="ts" id="ts-we-yellow">갱신: --:--:--</span></div>
+    <div class="section-title" style="color:#d97706;">🟡 건강 주의 <span class="pipe">|</span> <span class="sub">경계 영역 — 모니터링</span><span class="ts" id="ts-we-yellow">갱신: --:--:--</span></div>
     <div class="table-wrap">
         <table>
             <thead><tr>
@@ -123,17 +125,6 @@
     </div>
 </section>
 
-<!-- NETWORK API 엔드포인트 -->
-<section class="section">
-    <div class="section-title">🛰 NETWORK API 엔드포인트</div>
-    {% for e in endpoints %}
-    <div class="endpoint-row">
-        <span class="endpoint-method">{{ e.method }}</span>
-        <span class="endpoint-name">{{ e.name }}</span>
-        <span class="endpoint-desc">{{ e.desc }}</span>
-    </div>
-    {% endfor %}
-</section>
 
 <script>
 window.addEventListener('DOMContentLoaded', function () {
@@ -239,6 +230,37 @@ window.addEventListener('DOMContentLoaded', function () {
                     AutoRefresh.stampNow('ts-ops-vpc');
                 },
             },
+            // Wearable VPC: Kinesis consumer EC2 + stream
+            {
+                url: '/api/vm/wearable',
+                apply: function (data) {
+                    if (!data) return;
+                    var rows = (data.instances || []).map(function (i) {
+                        var st = (i.state || '').toLowerCase();
+                        var color = st === 'running' ? '#16a34a' : (st === 'stopped' ? '#dc2626' : '#94a3b8');
+                        var sub = (i.vm_id || '-');
+                        return { name: i.name || i.vm_id || '-', sub: sub, state: i.state || '-', state_color: color };
+                    });
+                    // Kinesis 정보는 datavpc/status 에서 가져오므로 여기선 EC2만 표시
+                    AutoRefresh.replaceTbody('ops-rows-we', vpcRowsHtml(rows));
+                    AutoRefresh.stampNow('ts-ops-vpc');
+                },
+            },
+            // Management VPC: admin EC2
+            {
+                url: '/api/vm/management',
+                apply: function (data) {
+                    if (!Array.isArray(data)) return;
+                    var rows = data.map(function (i) {
+                        var st = (i.state || '').toLowerCase();
+                        var color = st === 'running' ? '#16a34a' : (st === 'stopped' ? '#dc2626' : '#94a3b8');
+                        var sub = (i.vm_id || '-');
+                        return { name: i.name || i.vm_id || '-', sub: sub, state: i.state || '-', state_color: color };
+                    });
+                    AutoRefresh.replaceTbody('ops-rows-mgmt', vpcRowsHtml(rows));
+                    AutoRefresh.stampNow('ts-ops-vpc');
+                },
+            },
             // On-Prem: Local Lab 환경 list
             {
                 url: '/api/admin/local-lab-status',
@@ -293,7 +315,15 @@ window.addEventListener('DOMContentLoaded', function () {
             rows.push({name: 'Transit Gateway', sub: tgw.id + ' · attachments ' + (tgw.attachments || 0),
                        state: tgw.state || '-', state_color: tgw.state === 'available' ? '#16a34a' : '#dc2626'});
         }
-        if (vpn && Array.isArray(vpn.tunnels)) {
+        if (vpn && Array.isArray(vpn.connections) && vpn.connections.length) {
+            vpn.connections.forEach(function (conn) {
+                var up = conn.up || 0, total = conn.total || 0;
+                rows.push({name: conn.name || 'Site to Site VPN',
+                           sub: conn.id + ' · peer ' + (conn.peer || '-'),
+                           state: up + ' / ' + total + ' UP',
+                           state_color: (up === total && total > 0) ? '#16a34a' : '#f59e0b'});
+            });
+        } else if (vpn && Array.isArray(vpn.tunnels)) {
             var up = vpn.tunnels.filter(function (t) { return (t.status || '').toUpperCase() === 'UP'; }).length;
             rows.push({name: 'Site to Site VPN', sub: vpn.tunnels.length + ' tunnels',
                        state: up + ' / ' + vpn.tunnels.length + ' UP',

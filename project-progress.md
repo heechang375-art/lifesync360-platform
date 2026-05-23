@@ -2,6 +2,83 @@
 
 ---
 
+## On-Prem IP 변경 추적 (재변경 시 여기 참고)
+
+> 온프레미스 VM 브리지 IP가 바뀔 때마다 아래 위치를 모두 동기화해야 한다.
+
+**현재 IP: `192.168.45.157`** (브리지 어댑터, 2026-05-23 변경)
+이전 IP: `172.16.1.73`
+
+### 변경 필요 위치 (총 5곳)
+
+| # | 위치 | 변경 방법 | 현재 값 |
+|---|------|-----------|---------|
+| 1 | `admin-platform/app.py` line 104 `ONPREM_BASE_URL` 기본값 | 코드 수정 후 patch 배포 | `http://192.168.45.157` |
+| 2 | Lambda `lifesync-onprem-customer-query` 환경변수 `PRIVATE_API_URL` | `aws lambda update-function-configuration --function-name lifesync-onprem-customer-query --environment "Variables={PRIVATE_API_URL=http://<새IP>}"` | `http://192.168.45.157` |
+| 3 | TGW route table `tgw-rtb-05da340fa6bc057c7` static 라우트 | 기존 삭제 후 신규 CIDR 추가: `aws ec2 delete-transit-gateway-route --transit-gateway-route-table-id tgw-rtb-05da340fa6bc057c7 --destination-cidr-block 192.168.45.0/24` → `aws ec2 create-transit-gateway-route ... --destination-cidr-block <새CIDR>/24 --transit-gateway-attachment-id tgw-attach-0fb3c66d992387f40` | `192.168.45.0/24 → tgw-attach-0fb3c66d992387f40` |
+| 4 | Management VPC private RT `rtb-005a802a3c7f28634` | `aws ec2 delete-route --route-table-id rtb-005a802a3c7f28634 --destination-cidr-block 192.168.45.0/24` → `aws ec2 create-route --route-table-id rtb-005a802a3c7f28634 --destination-cidr-block <새CIDR>/24 --transit-gateway-id tgw-07aff02d25c808e1f` | `192.168.45.0/24 → TGW` |
+| 5 | lifesync-vpc app-private-rt `rtb-06d02c5c017083ac4` | 위 4번과 동일 방식 (`--route-table-id rtb-06d02c5c017083ac4`) | `192.168.45.0/24 → TGW` |
+
+### IP만 바뀌고 서브넷(/24)은 그대로일 때 (가장 흔한 케이스)
+
+```bash
+NEW_IP=<새IP>  # 예: 192.168.45.200
+
+# 1. app.py 수정 (line 104 ONPREM_BASE_URL 기본값) → patch 배포
+
+# 2. Lambda 환경변수
+aws lambda update-function-configuration \
+  --function-name lifesync-onprem-customer-query \
+  --environment "Variables={PRIVATE_API_URL=http://$NEW_IP}"
+
+# 서브넷이 같으면 라우팅(3~5)은 건드릴 필요 없음
+```
+
+### 서브넷까지 바뀔 때 (예: 192.168.45.0/24 → 192.168.46.0/24)
+
+```bash
+OLD_CIDR=192.168.45.0/24
+NEW_CIDR=192.168.46.0/24
+TGW_ID=tgw-07aff02d25c808e1f
+VPN_ATTACH=tgw-attach-0fb3c66d992387f40
+
+# TGW route table
+aws ec2 delete-transit-gateway-route --transit-gateway-route-table-id tgw-rtb-05da340fa6bc057c7 --destination-cidr-block $OLD_CIDR
+aws ec2 create-transit-gateway-route --transit-gateway-route-table-id tgw-rtb-05da340fa6bc057c7 --destination-cidr-block $NEW_CIDR --transit-gateway-attachment-id $VPN_ATTACH
+
+# Management VPC RT
+aws ec2 delete-route --route-table-id rtb-005a802a3c7f28634 --destination-cidr-block $OLD_CIDR
+aws ec2 create-route --route-table-id rtb-005a802a3c7f28634 --destination-cidr-block $NEW_CIDR --transit-gateway-id $TGW_ID
+
+# lifesync-vpc app-private-rt
+aws ec2 delete-route --route-table-id rtb-06d02c5c017083ac4 --destination-cidr-block $OLD_CIDR
+aws ec2 create-route --route-table-id rtb-06d02c5c017083ac4 --destination-cidr-block $NEW_CIDR --transit-gateway-id $TGW_ID
+```
+
+### 온프레미스 VM (ls-api) ipsec.conf도 확인
+
+CGW(VPN 터미네이션) 설정에 `rightsubnet`이 있으면 서브넷 변경 시 함께 수정 필요.
+현재 CGW IP: `175.114.128.81` / Tunnel 2 (UP): peer `43.201.181.136`
+
+---
+
+## Admin EC2 앱 배포 경로 (중요)
+
+> EC2 (i-0784a4837383967bf) 에는 두 개의 admin-platform 디렉토리가 있다.
+
+| 경로 | 용도 |
+|------|------|
+| `C:\admin-platform\` | **실제 실행 경로** — `C:\start-admin.bat`이 여기서 Flask 실행 |
+| `C:\ls\admin-platform\` | git 저장소 사본 — SSM patch 배포 시 이쪽에만 반영되면 반영 안 됨 |
+
+**배포 시 반드시 `C:\admin-platform\app.py`를 패치해야 함.**
+`C:\ls\admin-platform\app.py`에 패치해도 실행 중인 Flask에는 영향 없음.
+
+실행 환경 변수: `C:\start-admin.bat` 에서 `SECRET_KEY`, `ADMIN_USER`, `ADMIN_PASSWORD=admin123` 세팅
+로그: `C:\admin-platform\app.log`
+
+---
+
 ## 전체 현황 (빠른 확인)
 
 ### 온프레미스

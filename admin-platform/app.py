@@ -1,10 +1,7 @@
 import os
 import functools
 import json
-import random
-import threading
 import time
-from collections import deque
 from datetime import datetime, timezone, timedelta
 
 import boto3
@@ -52,20 +49,42 @@ _bootstrap_dotenv()
 
 
 def _bootstrap_secrets():
-    """Secrets Manager /lifesync/dev/db/master + SSM Parameter Store → os.environ (미설정 항목만 주입)"""
+    """Secrets Manager /lifesync/dev/db/master + GCP SA key → os.environ (미설정 항목만 주입)"""
     try:
         client = boto3.client('secretsmanager', region_name='ap-northeast-2')
         resp = client.get_secret_value(SecretId='/lifesync/dev/db/master')
-        for k, v in json.loads(resp['SecretString']).items():
+        d = json.loads(resp['SecretString'])
+        for k, v in d.items():
             if not os.environ.get(k):
                 os.environ[k] = str(v)
+        _alias = {'host': 'AURORA_HOST', 'username': 'DB_USER', 'password': 'DB_PASS', 'dbname': 'DB_NAME'}
+        for src, dst in _alias.items():
+            if src in d and not os.environ.get(dst):
+                os.environ[dst] = str(d[src])
     except Exception:
         pass
     try:
-        ssm = boto3.client('ssm', region_name='ap-northeast-2')
+        client = boto3.client('secretsmanager', region_name='ap-northeast-2')
+        resp = client.get_secret_value(SecretId='lifesync/gcp/service-account-key')
+        gcp_key = json.loads(resp['SecretString'])
+        if not os.environ.get('GOOGLE_APPLICATION_CREDENTIALS'):
+            import tempfile
+            tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
+            json.dump(gcp_key, tmp)
+            tmp.close()
+            os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = tmp.name
         if not os.environ.get('GCP_PROJECT_ID'):
-            r = ssm.get_parameter(Name='/lifesync/gcp_project_id', WithDecryption=True)
-            os.environ['GCP_PROJECT_ID'] = r['Parameter']['Value']
+            os.environ['GCP_PROJECT_ID'] = gcp_key.get('project_id', '')
+    except Exception:
+        pass
+    try:
+        client = boto3.client('secretsmanager', region_name='ap-northeast-2')
+        resp = client.get_secret_value(SecretId='lifesync/dev/redis')
+        redis_cfg = json.loads(resp['SecretString'])
+        if not os.environ.get('REDIS_HOST'):
+            os.environ['REDIS_HOST'] = redis_cfg.get('host', '')
+        if not os.environ.get('REDIS_PORT'):
+            os.environ['REDIS_PORT'] = str(redis_cfg.get('port', '6379'))
     except Exception:
         pass
 
@@ -82,16 +101,18 @@ DDB_SEGMENT_TABLE    = os.environ.get('DDB_SEGMENT_TABLE',    'analytics_segment
 DDB_DEMOGRAPHIC_TABLE= os.environ.get('DDB_DEMOGRAPHIC_TABLE','analytics_demographic_information')
 AWS_REGION           = os.environ.get('AWS_REGION', 'ap-northeast-2')
 ONPREM_QUERY_LAMBDA  = os.environ.get('ONPREM_QUERY_LAMBDA', '')
+ONPREM_BASE_URL      = os.environ.get('ONPREM_BASE_URL', 'http://192.168.45.157')
 
 GRADES = ['VIP', 'GOLD', 'SILVER', 'BASIC', 'CARE']
 CONSENT_LABELS = {
-    'BANK':       '은행',
-    'CARD':       '카드',
-    'INSURANCE':  '보험',
-    'SECURITIES': '증권',
-    'HEALTHCARE': '헬스케어',
-    'HOSPITAL':   '병원',
-    'WEARABLE':   '웨어러블',
+    'BANK':  '은행',
+    'CARD':  '카드',
+    'INS':   '보험',
+    'SEC':   '증권',
+    'HLT':   '헬스케어',
+    'HOS':   '병원',
+    'WBL':   '웨어러블',
+    'ONINS': '온라인보험',
 }
 
 from mockup_data import (
@@ -102,8 +123,8 @@ from mockup_data import (
     MOCKUP_AI_KPI4,
     MOCKUP_NET_TOPOLOGY,
     MOCKUP_NET_AWS_PLATFORM, MOCKUP_NET_AWS_DATA, MOCKUP_NET_AWS_GROUPVM,
+    MOCKUP_NET_AWS_WEARABLE, MOCKUP_NET_AWS_MANAGEMENT,
     MOCKUP_NET_AWS_CONNECTIVITY, MOCKUP_NET_GCP, MOCKUP_NET_ONPREM,
-    MOCKUP_NET_API_ENDPOINTS,
 )
 
 
@@ -149,10 +170,40 @@ def _get_lambda():
     return _lambda_client
 
 
-def _call_onprem(action, **kwargs):
+def _call_onprem(action, timeout=8, **kwargs):
+    import urllib.request, urllib.parse, json as _j
+
+    global_id = kwargs.get('global_id', '')
+    try:
+        _prev_gid = f"G{int(global_id[1:]) - 1:09d}" if global_id else ''
+    except Exception:
+        _prev_gid = ''
+
+    _ROUTES = {
+        'local_lab_status':      ('/internal/health/local-lab',              {}),
+        'count_master_customer': ('/internal/count/master_customer',         {'status': 'ACTIVE'}),
+        'count_users':           ('/internal/count/users',                   {'status': 'ACTIVE'}),
+        'count_users_consented': ('/internal/count/users_consented',         {}),
+        'get_consent':           (f'/internal/consent/{global_id}',          {}),
+        'get_user_by_global':    (f'/internal/auth/user/by_global/{global_id}', {}),
+        'get_profile':           (f'/internal/customer/{global_id}',         {}),
+        'get_pii':               (f'/internal/pii/{global_id}',              {}),
+        'get_profile_demo':      ('/internal/profile/list-all',              {'after': _prev_gid, 'size': '1'}),
+        'get_identity_map':      (f'/internal/identity_map/{global_id}',     {}),
+    }
+
+    if ONPREM_BASE_URL and action in _ROUTES:
+        path, params = _ROUTES[action]
+        qs = ('?' + urllib.parse.urlencode(params)) if params else ''
+        url = f'{ONPREM_BASE_URL.rstrip("/")}{path}{qs}'
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url), timeout=timeout) as resp:
+                return _j.loads(resp.read())
+        except Exception:
+            return {}
+
     if not ONPREM_QUERY_LAMBDA:
         return {}
-    import json as _j
     resp   = _get_lambda().invoke(
         FunctionName=ONPREM_QUERY_LAMBDA,
         InvocationType='RequestResponse',
@@ -163,14 +214,6 @@ def _call_onprem(action, **kwargs):
         return {}
     body = result.get('body', '{}')
     return _j.loads(body) if isinstance(body, str) else body
-
-
-def _add_rates(funnel_rows):
-    for row in funnel_rows:
-        rec = row['recommended'] or 1
-        row['click_rate']    = round(row['clicked']   / rec * 100)
-        row['purchase_rate'] = round(row['purchased'] / rec * 100)
-    return funnel_rows
 
 
 def _load_consent_from_s3(global_id):
@@ -285,7 +328,8 @@ def _ping_s3_ingestion():
         total_size = 0
         latest = None
         for prefix in _RAW_DOMAIN_PREFIXES:
-            for page in paginator.paginate(Bucket=raw_bucket, Prefix=prefix):
+            for page in paginator.paginate(Bucket=raw_bucket, Prefix=prefix,
+                                           PaginationConfig={'MaxItems': 500}):
                 for o in page.get('Contents', []):
                     total_size += o.get('Size', 0)
                     if today_prefix in o['Key']:
@@ -309,64 +353,6 @@ def _ping_s3_ingestion():
     except Exception:
         return {'raw_bucket_files': total, 'today_ingested': 0, 'iot_count': 0,
                 'total_size_bytes': 0, 'last_upload': {}, 'failed_count': 0}
-
-
-def _ping_domain_flow():
-    """도메인별 S3 prefix 적재 현황 — 7 도메인."""
-    raw_bucket = os.environ.get('LIFESYNC_RAW_S3_BUCKET', '')
-    stream     = os.environ.get('INGESTION_STREAM_NAME', 'lifesync-kinesis-wearable-stream')
-    domains    = [
-        ('BANK',       'LS 은행',     'bank/'),
-        ('CARD',       'LS 카드',     'card/'),
-        ('INSURANCE',  'LS 보험',     'insurance/'),
-        ('SECURITIES', 'LS 증권',     'securities/'),
-        ('HEALTHCARE', 'LS 헬스케어', 'healthcare/'),
-        ('HOSPITAL',   'LS 병원',     'hospital/'),
-    ]
-    out = []
-    if not raw_bucket:
-        return out
-    from datetime import datetime, timezone, timedelta
-    today_prefix = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-    warn_threshold = datetime.now(timezone.utc) - timedelta(hours=1)
-    s3 = _boto('s3')
-    paginator = s3.get_paginator('list_objects_v2')
-    for code, label, prefix in domains:
-        try:
-            files = []
-            for page in paginator.paginate(Bucket=raw_bucket, Prefix=prefix):
-                files.extend(page.get('Contents', []))
-            today_count = sum(1 for f in files if today_prefix in f['Key'])
-            latest      = max(files, key=lambda f: f['LastModified']) if files else None
-            state = 'OK' if latest and latest['LastModified'] > warn_threshold else ('WARN' if latest else 'DOWN')
-            out.append({
-                'domain': code, 'label': label,
-                'last_upload_at': latest['LastModified'].strftime('%H:%M:%S') if latest else '-',
-                'files_today':   today_count, 'state': state,
-                'source':        f's3://{raw_bucket}/{prefix}',
-            })
-        except Exception:
-            out.append({'domain': code, 'label': label, 'last_upload_at': '-', 'files_today': 0, 'state': 'ERR', 'source': '-'})
-    # WEARABLE: Kinesis IncomingRecords (last 5min)
-    try:
-        from datetime import datetime, timezone, timedelta
-        cw    = _boto('cloudwatch')
-        now   = datetime.now(timezone.utc)
-        stats = cw.get_metric_statistics(
-            Namespace='AWS/Kinesis', MetricName='IncomingRecords',
-            Dimensions=[{'Name': 'StreamName', 'Value': stream}],
-            StartTime=now - timedelta(minutes=5), EndTime=now, Period=60, Statistics=['Sum'],
-        )
-        total = sum(p.get('Sum', 0) for p in stats.get('Datapoints', []))
-        out.append({'domain': 'WEARABLE', 'label': '웨어러블',
-                    'last_upload_at': now.strftime('%H:%M:%S'),
-                    'files_today': int(total),
-                    'state': 'OK' if total > 0 else 'WARN',
-                    'source': f'Kinesis: {stream}'})
-    except Exception:
-        out.append({'domain': 'WEARABLE', 'label': '웨어러블', 'last_upload_at': '-',
-                    'files_today': 0, 'state': 'ERR', 'source': f'Kinesis: {stream}'})
-    return out
 
 
 def _ping_vm_status():
@@ -395,10 +381,11 @@ def _ping_vm_status():
             for inst in r.get('Instances', []):
                 tags     = {t['Key']: t['Value'] for t in inst.get('Tags', [])}
                 vpc_name = vpc_map.get(inst.get('VpcId'), '')
-                if   'group'    in vpc_name: deploy_group = 'group-app'
-                elif 'wearable' in vpc_name: deploy_group = 'wearable-app'
-                elif 'lifesync' in vpc_name: deploy_group = 'platform'
-                else:                        deploy_group = 'other'
+                if   'group'      in vpc_name: deploy_group = 'group-app'
+                elif 'wearable'   in vpc_name: deploy_group = 'wearable-app'
+                elif 'management' in vpc_name: deploy_group = 'management'
+                elif 'lifesync'   in vpc_name: deploy_group = 'platform'
+                else:                          deploy_group = 'other'
                 out.append({
                     'vm_id':        inst['InstanceId'],
                     'name':         tags.get('Name', '-'),
@@ -468,47 +455,6 @@ def _list_lifesync_lambdas():
         return []
 
 
-def _ping_lambda_metrics():
-    """V4 P4 r6 — `lifesync-` prefix Lambda 함수 자동 발견 + CloudWatch 1h 메트릭.
-
-    Invocations / Errors / Duration 합산. 신규 함수 배포 시 자동 포함.
-    """
-    from datetime import datetime, timezone, timedelta
-    fns = _list_lifesync_lambdas()
-    if not fns:
-        return []
-    cw  = _boto('cloudwatch')
-    now = datetime.now(timezone.utc)
-    start = now - timedelta(hours=1)
-    out = []
-    for fn in fns:
-        try:
-            inv = cw.get_metric_statistics(
-                Namespace='AWS/Lambda', MetricName='Invocations',
-                Dimensions=[{'Name': 'FunctionName', 'Value': fn}],
-                StartTime=start, EndTime=now, Period=3600, Statistics=['Sum'],
-            )
-            err = cw.get_metric_statistics(
-                Namespace='AWS/Lambda', MetricName='Errors',
-                Dimensions=[{'Name': 'FunctionName', 'Value': fn}],
-                StartTime=start, EndTime=now, Period=3600, Statistics=['Sum'],
-            )
-            dur = cw.get_metric_statistics(
-                Namespace='AWS/Lambda', MetricName='Duration',
-                Dimensions=[{'Name': 'FunctionName', 'Value': fn}],
-                StartTime=start, EndTime=now, Period=3600, Statistics=['Average'],
-            )
-            out.append({
-                'fn': fn,
-                'invocations_1h':  int(sum(p['Sum']     for p in inv.get('Datapoints', []))),
-                'errors_1h':       int(sum(p['Sum']     for p in err.get('Datapoints', []))),
-                'avg_duration_ms': int(sum(p['Average'] for p in dur.get('Datapoints', [])) / max(1, len(dur.get('Datapoints', [])))),
-            })
-        except Exception:
-            out.append({'fn': fn, 'invocations_1h': 0, 'errors_1h': 0, 'avg_duration_ms': 0})
-    return out
-
-
 def _ping_glue_last_run():
     """Glue Job 최근 run."""
     job = os.environ.get('GLUE_JOB_PHYSICAL_NAME', 'lifesync-etl')
@@ -528,21 +474,7 @@ def _ping_glue_last_run():
         return {}
 
 
-def _ping_next_batch():
-    """EventBridge 다음 배치 예정."""
-    rule = os.environ.get('GLUE_SCHEDULE_RULE', 'lifesync-daily-etl-rule')
-    try:
-        info = _boto('events').describe_rule(Name=rule)
-        return {
-            'rule_name':         rule,
-            'schedule':          info.get('ScheduleExpression', '-'),
-            'next_scheduled_at': '-',  # AWS는 next fire time API 없음 — UI에서 schedule expression만 표시
-        }
-    except Exception:
-        return {}
-
-
-# ── 멀티클라우드 — TGW / VPN / VPC Peering ping ───────────
+# ── 멀티클라우드 — TGW / VPN ping ───────────
 def _ping_tgw():
     try:
         tgws = _boto('ec2').describe_transit_gateways().get('TransitGateways', [])
@@ -568,6 +500,7 @@ def _ping_vpn():
         conns = [c for c in ec2.describe_vpn_connections().get('VpnConnections', []) if c.get('State') != 'deleted']
         cgw_cache = {}
         out = []
+        connections = []
         for c in conns:
             cgw_id = c.get('CustomerGatewayId', '')
             if cgw_id and cgw_id not in cgw_cache:
@@ -578,74 +511,30 @@ def _ping_vpn():
                     cgw_cache[cgw_id] = {}
             cgw_info = cgw_cache.get(cgw_id, {})
             tag_name = next((t['Value'] for t in c.get('Tags', []) if t.get('Key') == 'Name'), '-')
+            conn_tunnels = []
             for t in c.get('VgwTelemetry', []) or [{'OutsideIpAddress': '-', 'Status': '-'}]:
-                out.append({
+                tunnel = {
                     'id':               f"{c['VpnConnectionId']}-{t.get('OutsideIpAddress', '?')}",
                     'status':           t.get('Status', '-').upper(),
                     'bgp_asn':          str(cgw_info.get('BgpAsn', '-')),
                     'traffic_in_mbps':  0,
                     'traffic_out_mbps': 0,
                     'peer':             cgw_info.get('IpAddress', tag_name),
-                })
-        return {'tunnels': out}
+                }
+                out.append(tunnel)
+                conn_tunnels.append(tunnel)
+            up = sum(1 for t in conn_tunnels if t.get('status') == 'UP')
+            connections.append({
+                'name':    tag_name,
+                'id':      c.get('VpnConnectionId', ''),
+                'peer':    cgw_info.get('IpAddress', '-'),
+                'tunnels': conn_tunnels,
+                'up':      up,
+                'total':   len(conn_tunnels),
+            })
+        return {'tunnels': out, 'connections': connections}
     except Exception:
         return {}
-
-
-def _ping_vpc_peering():
-    try:
-        peers = _boto('ec2').describe_vpc_peering_connections().get('VpcPeeringConnections', [])
-        return [
-            {
-                'id':        p['VpcPeeringConnectionId'],
-                'state':     p.get('Status', {}).get('Code', '-'),
-                'requester': p.get('RequesterVpcInfo', {}).get('VpcId', '-'),
-                'accepter':  p.get('AccepterVpcInfo', {}).get('VpcId', '-'),
-            }
-            for p in peers
-        ]
-    except Exception:
-        return []
-
-
-def _ping_wearable_realtime():
-    """Wearable CloudWatch custom metric (hr/bp/spo2/steps/alerts/send)."""
-    from datetime import datetime, timezone, timedelta
-    cw    = _boto('cloudwatch')
-    now   = datetime.now(timezone.utc)
-    start = now - timedelta(minutes=5)
-    metrics = [
-        ('심박수',        'wearable_hr',      'bpm',     '60-100'),
-        ('혈압',          'wearable_bp_sys',  '',        '< 120/80'),
-        ('산소포화도',    'wearable_spo2',    '%',       '≥ 95'),
-        ('운동량 (steps)','wearable_steps',   '',        '—'),
-        ('이상 이벤트',   'wearable_alerts',  '24h',     '24h'),
-        ('데이터 송신',   'wearable_send',    '/min',    '—'),
-    ]
-    out = []
-    for label, m, suffix, rng in metrics:
-        try:
-            stats = cw.get_metric_statistics(
-                Namespace='LifeSync/Wearable', MetricName=m,
-                StartTime=start, EndTime=now, Period=60, Statistics=['Average'],
-            )
-            pts = stats.get('Datapoints', [])
-            v = round(pts[-1]['Average'], 1) if pts else 0
-            out.append({'metric': label, 'current': f'{v}{suffix}', 'range': rng,
-                        'state': 'OK', 'source': f'CW · {m}'})
-        except Exception:
-            out.append({'metric': label, 'current': '-', 'range': rng,
-                        'state': 'ERR', 'source': f'CW · {m}'})
-    return out
-
-
-def _ping_local_lab():
-    """Local Lab 상태 — onprem Lambda action 'local_lab_status'."""
-    try:
-        data = _call_onprem('local_lab_status')
-        return data.get('environments', [])
-    except Exception:
-        return []
 
 
 def _ping_kinesis():
@@ -792,9 +681,11 @@ def _ddb_prob_distribution():
 # ── GCP SDK 헬퍼 ────────────────────────────────────────────
 # 인증: ADC (Application Default Credentials) — GOOGLE_APPLICATION_CREDENTIALS env
 #   또는 Workload Identity Federation. 인증 없으면 모든 함수가 안전하게 [] / {} 반환.
-GCP_PROJECT_ID  = os.environ.get('GCP_PROJECT_ID', '')
 GCP_BQ_DATASET  = os.environ.get('GCP_BQ_DATASET', 'lifesync_curated')
 GCP_VERTEX_LOC  = os.environ.get('GCP_VERTEX_LOCATION', 'asia-northeast3')
+
+def _gcp_project():
+    return os.environ.get('GCP_PROJECT_ID', '')
 
 _gcp_bq_client      = None
 _gcp_aip_initialized= False
@@ -803,12 +694,13 @@ _gcp_mon_client     = None
 
 def _get_bq():
     global _gcp_bq_client
-    if not GCP_PROJECT_ID:
+    pid = _gcp_project()
+    if not pid:
         return None
     if _gcp_bq_client is None:
         try:
             from google.cloud import bigquery as _bq
-            _gcp_bq_client = _bq.Client(project=GCP_PROJECT_ID)
+            _gcp_bq_client = _bq.Client(project=pid)
         except Exception:
             return None
     return _gcp_bq_client
@@ -816,12 +708,12 @@ def _get_bq():
 
 def _init_aip():
     global _gcp_aip_initialized
-    if not GCP_PROJECT_ID:
+    if not _gcp_project():
         return False
     if not _gcp_aip_initialized:
         try:
             from google.cloud import aiplatform
-            aiplatform.init(project=GCP_PROJECT_ID, location=GCP_VERTEX_LOC)
+            aiplatform.init(project=_gcp_project(), location=GCP_VERTEX_LOC)
             _gcp_aip_initialized = True
         except Exception:
             return False
@@ -830,7 +722,7 @@ def _init_aip():
 
 def _get_mon():
     global _gcp_mon_client
-    if not GCP_PROJECT_ID:
+    if not _gcp_project():
         return None
     if _gcp_mon_client is None:
         try:
@@ -841,16 +733,32 @@ def _get_mon():
     return _gcp_mon_client
 
 
+def _gcp_reachable(host='monitoring.googleapis.com', port=443, timeout=2.0):
+    import socket
+    try:
+        socket.create_connection((host, port), timeout=timeout).close()
+        return True
+    except Exception:
+        return False
+
+
 def _stub_gcp_status():
     """
     P4 r32~36 — GCP BigQuery / Vertex AI / Cloud Run 상태.
     Cloud Monitoring API 로 service 별 uptime/health 조회. 인증/호출 실패 시 빈 list.
     """
+    if not _gcp_project():
+        return []
+    if not _gcp_reachable():
+        return [
+            {'service': 'BigQuery',  'state': 'UNKNOWN', 'error': 'GCP API unreachable from this network'},
+            {'service': 'Vertex AI', 'state': 'UNKNOWN', 'error': 'GCP API unreachable from this network'},
+            {'service': 'Cloud Run', 'state': 'UNKNOWN', 'error': 'GCP API unreachable from this network'},
+        ]
     mon = _get_mon()
     if mon is None:
         return []
     try:
-        # BQ 쿼리 잡 카운트 (최근 7일) — Monitoring 'bigquery.googleapis.com/job/num_in_flight'
         from google.cloud import monitoring_v3 as _mon
         from google.protobuf import timestamp_pb2
         import time
@@ -867,12 +775,12 @@ def _stub_gcp_status():
         ]:
             try:
                 req = _mon.ListTimeSeriesRequest({
-                    'name':     f'projects/{GCP_PROJECT_ID}',
+                    'name':     f'projects/{_gcp_project()}',
                     'filter':   f'metric.type="{metric}"',
                     'interval': interval,
                     'view':     _mon.ListTimeSeriesRequest.TimeSeriesView.HEADERS,
                 })
-                series = list(mon.list_time_series(request=req))
+                series = list(mon.list_time_series(request=req, timeout=5.0))
                 out.append({'service': service, 'state': 'UP', 'series_count': len(series)})
             except Exception as e:
                 out.append({'service': service, 'state': 'UNKNOWN', 'error': str(e)[:80]})
@@ -908,26 +816,6 @@ def _stub_vertex_metrics():
         return {}
 
 
-def _stub_feature_importance():
-    """
-    P3 r9 — Feature Importance: BigQuery lifesync_curated.ai_feature_table 컬럼별 분포.
-    """
-    bq = _get_bq()
-    if bq is None:
-        return []
-    try:
-        sql = f"""
-            SELECT column_name, AVG(value) AS avg_val, STDDEV(value) AS std_val
-            FROM `{GCP_PROJECT_ID}.{GCP_BQ_DATASET}.ai_feature_table`
-            GROUP BY column_name
-            ORDER BY ABS(avg_val) DESC
-            LIMIT 20
-        """
-        return [dict(row) for row in bq.query(sql).result()]
-    except Exception:
-        return []
-
-
 def _stub_bigquery_analytics(query_kind='recommendation_mart'):
     """
     P3 r17,r28 — BigQuery 마트 ad-hoc 조회.
@@ -941,15 +829,15 @@ def _stub_bigquery_analytics(query_kind='recommendation_mart'):
     try:
         if query_kind == 'recommendation_mart':
             sql = f"""SELECT recommendation_name, COUNT(*) AS cnt
-                      FROM `{GCP_PROJECT_ID}.{GCP_BQ_DATASET}.recommendation_mart`
+                      FROM `{_gcp_project()}.{GCP_BQ_DATASET}.recommendation_mart`
                       GROUP BY recommendation_name ORDER BY cnt DESC LIMIT 20"""
         elif query_kind == 'customer_summary':
-            sql = f"""SELECT * FROM `{GCP_PROJECT_ID}.lifesync_serving.v_customer_summary` LIMIT 100"""
+            sql = f"""SELECT * FROM `{_gcp_project()}.lifesync_serving.v_customer_summary` LIMIT 100"""
         elif query_kind == 'prediction_result':
             sql = f"""SELECT model_name,
                              COUNTIF(actual_label IS NOT NULL) AS labeled,
                              AVG(IF(predicted_label = actual_label, 1.0, 0.0)) AS accuracy
-                      FROM `{GCP_PROJECT_ID}.lifesync_ml.vip_prediction_result`
+                      FROM `{_gcp_project()}.lifesync_ml.vip_prediction_result`
                       WHERE actual_label IS NOT NULL
                       GROUP BY model_name"""
         else:
@@ -1083,7 +971,7 @@ def _ddb_grade_dist():
         total += 1
     if not total:
         return []
-    color_map = {'S': '#dc2626', 'A': '#f59e0b', 'B': '#3b82f6', 'C': '#16a34a', 'D': '#94a3b8'}
+    color_map = {'VIP': '#dc2626', 'GOLD': '#f59e0b', 'SILVER': '#3b82f6', 'BASIC': '#16a34a', 'CARE': '#94a3b8'}
     return [
         {'grade': g, 'count': c,
          'color': color_map.get(g, '#94a3b8'),
@@ -1108,18 +996,17 @@ def _aurora_action_code_rec_data():
 
 
 def _aurora_pr_models():
-    """ml_model_evaluation_daily 최신 모델별 Precision/Recall."""
+    """ml_model_evaluation_daily 최신 모델별 Precision."""
     try:
         with get_db() as db, db.cursor() as cur:
             cur.execute(
                 "SELECT model_name AS name, "
-                "       ROUND(precision_score * 100, 1) AS `precision`, "
-                "       ROUND(recall_score    * 100, 1) AS recall "
+                "       ROUND(precision_score * 100, 1) AS `precision` "
                 "FROM ml_model_evaluation_daily "
                 "ORDER BY eval_date DESC LIMIT 4"
             )
             return [
-                {'name': r['name'], 'precision': float(r['precision'] or 0), 'recall': float(r['recall'] or 0)}
+                {'name': r['name'], 'precision': float(r['precision'] or 0)}
                 for r in cur.fetchall()
             ]
     except Exception:
@@ -1342,22 +1229,27 @@ def users():
         pii = (_call_onprem('get_pii', global_id=q) or {})
         name = pii.get('name', '') or ''
         if name:
-            profile['name_masked'] = name[0] + '*' * (len(name) - 1)
+            if len(name) <= 2:
+                profile['name_masked'] = name[0] + '*'
+            else:
+                profile['name_masked'] = name[0] + '*' * (len(name) - 2) + name[-1]
         mobile = pii.get('mobile', '') or ''
-        if len(mobile) >= 11:
-            profile['phone_masked'] = f"{mobile[:3]}-****-{mobile[-4:]}"
-        profile['gender'] = pii.get('gender', '-') or '-'
-        birth = pii.get('birth_date', '') or ''
-        if birth:
-            try:
-                from datetime import datetime as _dt
-                age = _dt.now().year - int(birth.split('-')[0])
-                profile['age_band'] = f'{(age // 10) * 10}대'
-            except Exception:
-                pass
-        addr = pii.get('address', '') or ''
-        if addr:
-            profile['region'] = addr.split()[0]
+        if mobile:
+            digits = mobile.replace('-', '')
+            if len(digits) >= 10:
+                profile['phone_masked'] = f"{digits[:3]}-****-{digits[-4:]}"
+    except Exception:
+        pass
+    try:
+        demo_resp = (_call_onprem('get_profile_demo', global_id=q) or {})
+        demo_items = demo_resp.get('items', [])
+        if demo_items and demo_items[0].get('global_id') == q:
+            d = demo_items[0]
+            profile['gender']   = d.get('gender', '-') or '-'
+            profile['age_band'] = d.get('age_band', '-') or '-'
+            profile['region']   = d.get('region', '-') or '-'
+            profile['income']   = d.get('income_grade', '-') or '-'
+            profile['asset']    = d.get('asset_grade', '-') or '-'
     except Exception:
         pass
 
@@ -1394,7 +1286,15 @@ def users():
                     ' WHERE c2.category_code = r.target_category AND p.active_flag = "Y" '
                     ' ORDER BY p.priority_rank ASC LIMIT 1) AS product_name, '
                     '(SELECT c3.category_name FROM category_master c3 WHERE c3.category_code = r.target_category LIMIT 1) AS category_name '
-                    'FROM cross_sell_rule r WHERE r.active_flag = "Y" ORDER BY r.priority_rank ASC LIMIT 3'
+                    'FROM cross_sell_rule r WHERE r.active_flag = "Y" '
+                    '  AND r.base_category IN ('
+                    '    SELECT cat.category_code FROM customer_recommend_history h '
+                    '    JOIN product_master p ON h.product_id = p.product_id '
+                    '    JOIN category_master cat ON p.category_id = cat.category_id '
+                    '    WHERE h.global_id = %s AND h.purchased_flag IN (\'Y\', \'1\')'
+                    '  ) '
+                    'ORDER BY r.priority_rank ASC LIMIT 3',
+                    (q,)
                 )
                 for row in _cur.fetchall():
                     if row['product_name']:
@@ -1417,17 +1317,17 @@ def users():
     except Exception:
         pass
 
-    _grade = (_scores or {}).get('dynamic_grade', 'C')
+    _grade = (_scores or {}).get('dynamic_grade', 'BASIC')
     _dyn_score = float((_scores or {}).get('dynamic_score', 50))
     _vip_prob = float((_scores or {}).get('vip_prob', 0))
     _rec_prob = float((_scores or {}).get('rec_prob', 0))
     _signup_prob = float((_scores or {}).get('signup_prob', 0))
     _nba_action_map = {
-        'S': 'VIP 전용 프리미엄 자산관리 서비스 가입 권유',
-        'A': '우수 고객 혜택 패키지 안내',
-        'B': '중장기 재테크 상품 추천',
-        'C': '기본 저축 상품 및 혜택 안내',
-        'D': '고객 니즈 파악 상담 진행',
+        'VIP':    'VIP 전용 프리미엄 자산관리 서비스 가입 권유',
+        'GOLD':   '우수 고객 혜택 패키지 안내',
+        'SILVER': '중장기 재테크 상품 추천',
+        'BASIC':  '기본 저축 상품 및 혜택 안내',
+        'CARE':   '고객 니즈 파악 상담 진행',
     }
     nba = {
         'action': _nba_action_map.get(_grade, '-'),
@@ -1608,7 +1508,6 @@ def ai():
 
 
 # ── 신규 admin JSON API — analytics batch 결과 read ─────────────
-from flask import jsonify  # noqa: E402
 
 @app.route('/api/admin/recommend-trend')
 @login_required
@@ -1658,9 +1557,9 @@ def _stub_aurora_summary():
     cards = [dict(c, value='-') for c in MOCKUP_DASH_KPI]
 
     # KPI 1~3: On-Prem Lambda (VPN 연결 필요)
-    for idx, action in [(0, 'count_master_customer'), (1, 'count_users'), (2, 'count_users_consented')]:
+    for idx, action, tout in [(0, 'count_master_customer', 8), (1, 'count_users', 8), (2, 'count_users_consented', 20)]:
         try:
-            c = (_call_onprem(action) or {}).get('count')
+            c = (_call_onprem(action, timeout=tout) or {}).get('count')
             if c is not None:
                 cards[idx]['value'] = f'{int(c):,}'
         except Exception:
@@ -1687,8 +1586,10 @@ def _stub_aurora_summary():
             r = cur.fetchone()
             if r and r['total']:
                 cards[4]['value'] = f"{int(r['total']):,}"
-                ctr = (r['clicked'] or 0) / r['total'] * 100
-                cvr = (r['purchased'] or 0) / r['total'] * 100
+                clk = r['clicked'] or 0
+                pur = r['purchased'] or 0
+                ctr = clk / r['total'] * 100
+                cvr = round(pur * 100.0 / clk, 1) if clk else 0
                 cards[6]['value'] = f"{ctr:.1f}%"
                 cards[7]['value'] = f"{cvr:.1f}%"
     except Exception:
@@ -1826,11 +1727,23 @@ def _cloud3_from_aws():
             for x in aws_list
         ]
 
-    # GCP — stub 응답 (자격증명 없으면 빈 dict → state '-' 유지)
-    gcp = _stub_gcp_status() or {}
-    if gcp.get('state'):
-        cards[1]['state'] = gcp['state']
-        cards[1]['sub']   = gcp.get('note', '-')
+    # GCP — _stub_gcp_status() 는 list 반환
+    gcp_list = _stub_gcp_status() or []
+    if gcp_list:
+        up   = sum(1 for g in gcp_list if g.get('state') == 'UP')
+        unk  = sum(1 for g in gcp_list if g.get('state') == 'UNKNOWN')
+        if unk == len(gcp_list):
+            cards[1]['state'] = 'UNKNOWN'
+        elif up == len(gcp_list):
+            cards[1]['state'] = f'{up} / {len(gcp_list)} 정상'
+        else:
+            cards[1]['state'] = f'{up} / {len(gcp_list)} 정상'
+        cards[1]['sub']     = ' · '.join(g['service'] for g in gcp_list[:3])
+        cards[1]['details'] = [
+            {'name': g['service'], 'state': g['state'],
+             'note': g.get('error', '') or f"series={g.get('series_count', '-')}"}
+            for g in gcp_list
+        ]
 
     # On-Prem — VM 단위 묶음: vm:ls-* + 그 위 service 합산 (DOWN 하나라도 있으면 DOWN)
     try:
@@ -1950,27 +1863,34 @@ def _ai_kpi4_from_aws():
             _row = _cur.fetchone()
             if _row:
                 cards[0]['value'] = f"{float(_row['ctr'] or 0):.1f}%"
-                cards[0]['sub']   = f"lifesync-recommendation-engine · {_row['date']}"
+                cards[0]['sub']   = f"최근 1일 · customer_recommend_daily · {_row['date']}"
                 cards[1]['value'] = f"{float(_row['cvr'] or 0):.1f}%"
-                cards[1]['sub']   = f"lifesync-ingest · {_row['date']}"
+                cards[1]['sub']   = f"최근 1일 · customer_recommend_daily · {_row['date']}"
     except Exception:
         pass
     try:
-        import boto3 as _boto3
-        _ddb = _boto3.resource('dynamodb', region_name=AWS_REGION)
-        _tbl = _ddb.Table('lifesync_customer_result')
-        _resp = _tbl.scan(
-            ProjectionExpression='vip_prob, rec_prob, signup_prob',
-            Limit=200,
+        _ddb_r = boto3.resource('dynamodb', region_name=AWS_REGION)
+        _resp  = _ddb_r.Table('lifesync_customer_result').scan(
+            ProjectionExpression='update_time', Limit=1,
         )
-        _items = _resp.get('Items', [])
-        if _items:
-            _avg = lambda k: sum(float(i.get(k, 0) or 0) for i in _items) / len(_items)
-            _score_avg = round((_avg('vip_prob') + _avg('rec_prob') + _avg('signup_prob')) / 3, 2)
-            cards[2]['value'] = str(_score_avg)
-            cards[2]['sub'] = 'vip_prob / rec_prob / signup_prob 평균'
-            cards[3]['value'] = f'{len(_items):,}'
-            cards[3]['sub'] = 'DynamoDB lifesync_customer_result · 분석 대상'
+        _ut = (_resp.get('Items') or [{}])[0].get('update_time', '')
+        if _ut:
+            cards[2]['value'] = str(_ut)[:16]
+            cards[2]['sub']   = 'DynamoDB lifesync_customer_result · 배치 갱신 시각'
+    except Exception:
+        pass
+    try:
+        _ddb_c = boto3.client('dynamodb', region_name=AWS_REGION)
+        _cnt   = 0
+        _kw    = {'TableName': 'lifesync_customer_result', 'Select': 'COUNT'}
+        while True:
+            _r = _ddb_c.scan(**_kw)
+            _cnt += _r['Count']
+            if 'LastEvaluatedKey' not in _r:
+                break
+            _kw['ExclusiveStartKey'] = _r['LastEvaluatedKey']
+        cards[3]['value'] = f'{_cnt:,}'
+        cards[3]['sub']   = 'DynamoDB lifesync_customer_result · AI 분석 완료 고객'
     except Exception:
         pass
     return cards
@@ -2038,39 +1958,55 @@ def api_ai_chart_donut():
 
 
 def _ai_age_perf_2step():
-    """연령대별 추천 성과 — On-Prem 2-step, DDB analytics_segment fallback. V6 R20."""
+    """연령대별 추천 성과 — On-Prem profile/list-all 페이지네이션, DDB fallback. V6 R21."""
     try:
-        result = _call_onprem('list_by_age_band') or {}
-        age_groups = result.get('age_groups', {})
-        if age_groups and all(age_groups.get(b) for b in ['20s', '30s', '40s', '50s', '60s+']):
-            out = []
-            with get_db() as db, db.cursor() as cur:
-                for age_band in ['20s', '30s', '40s', '50s', '60s+']:
-                    gids = age_groups.get(age_band, [])
-                    if not gids:
-                        out.append({'age_band': age_band, 'recommended': 0,
-                                    'clicked': 0, 'purchased': 0, 'ctr': 0, 'cvr': 0})
-                        continue
-                    placeholders = ','.join(['%s'] * len(gids))
-                    cur.execute(
-                        f"SELECT COUNT(*) AS recommended, "
-                        f"       SUM(clicked_flag IN ('Y','1')) AS clicked, "
-                        f"       SUM(purchased_flag IN ('Y','1')) AS purchased "
-                        f"FROM customer_recommend_history "
-                        f"WHERE global_id IN ({placeholders}) "
-                        f"  AND recommended_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)",
-                        tuple(gids)
-                    )
-                    row = cur.fetchone() or {}
-                    rec = int(row.get('recommended') or 0)
-                    clk = int(row.get('clicked') or 0)
-                    pur = int(row.get('purchased') or 0)
-                    out.append({
-                        'age_band': age_band, 'recommended': rec, 'clicked': clk, 'purchased': pur,
-                        'ctr': round(clk * 100.0 / rec, 1) if rec else 0,
-                        'cvr': round(pur * 100.0 / clk, 1) if clk else 0,
-                    })
-            return out
+        if not ONPREM_BASE_URL:
+            raise ValueError("ONPREM_BASE_URL not set")
+        age_groups = {}
+        after = ''
+        for _ in range(10):
+            qs = 'size=500' + (f'&after={after}' if after else '')
+            url = f'{ONPREM_BASE_URL.rstrip("/")}/internal/profile/list-all?{qs}'
+            with urllib.request.urlopen(urllib.request.Request(url), timeout=2) as resp:
+                data = _j.loads(resp.read())
+            for item in data.get('items', []):
+                gid = item.get('global_id')
+                ab  = item.get('age_band')
+                if gid and ab:
+                    age_groups.setdefault(ab, []).append(gid)
+            after = data.get('next_after', '')
+            if not after:
+                break
+        if not age_groups:
+            raise ValueError("no age_band data from on-prem")
+        out = []
+        with get_db() as db, db.cursor() as cur:
+            for age_band in ['20s', '30s', '40s', '50s', '60s+']:
+                gids = age_groups.get(age_band, [])
+                if not gids:
+                    out.append({'age_band': age_band, 'recommended': 0,
+                                'clicked': 0, 'purchased': 0, 'ctr': 0, 'cvr': 0})
+                    continue
+                placeholders = ','.join(['%s'] * len(gids))
+                cur.execute(
+                    f"SELECT COUNT(*) AS recommended, "
+                    f"       SUM(clicked_flag IN ('Y','1')) AS clicked, "
+                    f"       SUM(purchased_flag IN ('Y','1')) AS purchased "
+                    f"FROM customer_recommend_history "
+                    f"WHERE global_id IN ({placeholders}) "
+                    f"  AND recommended_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)",
+                    tuple(gids)
+                )
+                row = cur.fetchone() or {}
+                rec = int(row.get('recommended') or 0)
+                clk = int(row.get('clicked') or 0)
+                pur = int(row.get('purchased') or 0)
+                out.append({
+                    'age_band': age_band, 'recommended': rec, 'clicked': clk, 'purchased': pur,
+                    'ctr': round(clk * 100.0 / rec, 1) if rec else 0,
+                    'cvr': round(pur * 100.0 / clk, 1) if clk else 0,
+                })
+        return out
     except Exception:
         pass
     # On-Prem 미연결 → DDB analytics_segment_performance age_band 데이터로 대체
@@ -2299,6 +2235,14 @@ def api_vm_wearable():
     })
 
 
+@app.route('/api/vm/management')
+@login_required
+def api_vm_management():
+    """Management VPC EC2 인스턴스 (admin EC2)."""
+    rows = _ping_vm_status() or []
+    return jsonify([r for r in rows if r.get('deploy_group') == 'management'])
+
+
 @app.route('/api/kinesis/status')
 @login_required
 def api_kinesis_status():
@@ -2317,7 +2261,7 @@ def api_emr_status():
 @login_required
 def api_datavpc_status():
     """DataVPC 4개 컴포넌트 통합 상태 — S3 / Kinesis / Glue / EMR."""
-    raw_bucket = os.environ.get('LIFESYNC_RAW_S3_BUCKET', 'lifesync-354-raw')
+    raw_bucket = os.environ.get('LIFESYNC_RAW_S3_BUCKET', 'lifesync-raw')
     try:
         _boto('s3').head_bucket(Bucket=raw_bucket)
         s3_state = 'EXISTS'
@@ -2405,23 +2349,24 @@ def ops():
     wearable_snap = wearable_engine.snapshot()
     # VPC 카드는 JS 폴링 (30s) 으로 _ping_* 결과 채움. SSR 은 빈 카드 + 토폴로지/엔드포인트만 정적
     topology = MOCKUP_NET_TOPOLOGY                # 토폴로지는 디자인 (인프라 그림) — 정적
-    endpoints = MOCKUP_NET_API_ENDPOINTS          # API 라우트 listing — 정적 디자인
-    platform = dict(MOCKUP_NET_AWS_PLATFORM, rows=[])  # 제목 유지, rows 빈
-    data     = dict(MOCKUP_NET_AWS_DATA,     rows=[])
-    gvm      = dict(MOCKUP_NET_AWS_GROUPVM,  rows=[])
-    conn     = dict(MOCKUP_NET_AWS_CONNECTIVITY, rows=[])
-    gcp      = dict(MOCKUP_NET_GCP,    rows=[])
-    onprem   = dict(MOCKUP_NET_ONPREM, rows=[])
+    platform   = dict(MOCKUP_NET_AWS_PLATFORM,    rows=[])
+    data       = dict(MOCKUP_NET_AWS_DATA,        rows=[])
+    gvm        = dict(MOCKUP_NET_AWS_GROUPVM,     rows=[])
+    wearable   = dict(MOCKUP_NET_AWS_WEARABLE,    rows=[])
+    management = dict(MOCKUP_NET_AWS_MANAGEMENT,  rows=[])
+    conn       = dict(MOCKUP_NET_AWS_CONNECTIVITY, rows=[])
+    gcp        = dict(MOCKUP_NET_GCP,    rows=[])
+    onprem     = dict(MOCKUP_NET_ONPREM, rows=[])
 
     return render_template('ops.html',
         active='ops',
         topology=topology,
-        net_platform=platform, net_data=data, net_groupvm=gvm,
+        net_platform=platform, net_wearable=wearable, net_data=data,
+        net_groupvm=gvm, net_management=management,
         net_conn=conn, net_gcp=gcp, net_onprem=onprem,
         wearable_kpi=wearable_snap['kpi'],
         wearable_red=wearable_snap['red'],
         wearable_yellow=wearable_snap['yellow'],
-        endpoints=endpoints,
     )
 
 
@@ -2431,6 +2376,41 @@ def inject_config():
         'config': {'ADMIN_USER': ADMIN_USER},
         'consent_labels': CONSENT_LABELS,
     }
+
+
+@app.route('/api/debug/cloud')
+@login_required
+def api_debug_cloud():
+    """임시 디버그: boto3 raw 결과 + STS identity"""
+    out = {}
+    try:
+        sts = boto3.client('sts', region_name=AWS_REGION)
+        out['sts_identity'] = sts.get_caller_identity()
+    except Exception as e:
+        out['sts_identity'] = str(e)
+    try:
+        rds = boto3.client('rds', region_name=AWS_REGION)
+        clusters = rds.describe_db_clusters().get('DBClusters', [])
+        out['rds_clusters'] = [{'id': c.get('DBClusterIdentifier'), 'status': c.get('Status')} for c in clusters]
+    except Exception as e:
+        out['rds_clusters'] = str(e)
+    try:
+        ddb = boto3.client('dynamodb', region_name=AWS_REGION)
+        out['ddb_tables'] = ddb.list_tables().get('TableNames', [])
+    except Exception as e:
+        out['ddb_tables'] = str(e)
+    try:
+        s3 = boto3.client('s3', region_name=AWS_REGION)
+        raw_bucket = os.environ.get('LIFESYNC_RAW_S3_BUCKET', 'lifesync-raw')
+        out['s3_head_raw'] = 'EXISTS'
+        s3.head_bucket(Bucket=raw_bucket)
+    except Exception as e:
+        out['s3_head_raw'] = str(e)
+    out['env_AWS_REGION'] = AWS_REGION
+    out['env_AURORA_HOST'] = os.environ.get('AURORA_HOST', 'NOT SET')
+    out['env_GCP_PROJECT_ID'] = os.environ.get('GCP_PROJECT_ID', 'NOT SET')
+    out['boto_clients_keys'] = list(_boto_clients.keys())
+    return jsonify(out)
 
 
 if __name__ == '__main__':

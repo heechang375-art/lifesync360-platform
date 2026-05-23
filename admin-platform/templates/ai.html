@@ -26,7 +26,7 @@
 
         <!-- 7일 추이 (Bar + Line SVG) -->
         <div>
-            <div class="card-title">📊 추천 건수 / CTR / CVR <span style="color:#94a3b8; font-weight:500;">(최근 7일)</span></div>
+            <div class="card-title">📊 추천 건수 / CTR(클릭률) / CVR(전환율) <span style="color:#94a3b8; font-weight:500;">(최근 7일)</span></div>
             {% if trend_7d %}
             {% set max_r   = (trend_7d|map(attribute='recommended')|max) or 1 %}
             {% set max_ctr = ([trend_7d|map(attribute='ctr')|max, 10]|max) %}
@@ -62,8 +62,8 @@
             {% endif %}
             <div style="display:flex; gap:14px; justify-content:center; font-size:11px; color:#64748b; margin-top:4px;">
                 <span><span style="display:inline-block; width:10px; height:3px; background:#dbeafe; vertical-align:middle; margin-right:4px;"></span>추천 건수</span>
-                <span><span style="display:inline-block; width:10px; height:3px; background:#3b82f6; vertical-align:middle; margin-right:4px;"></span>CTR</span>
-                <span><span style="display:inline-block; width:10px; height:3px; background:#f59e0b; vertical-align:middle; margin-right:4px;"></span>CVR</span>
+                <span><span style="display:inline-block; width:10px; height:3px; background:#3b82f6; vertical-align:middle; margin-right:4px;"></span>CTR (클릭률)</span>
+                <span><span style="display:inline-block; width:10px; height:3px; background:#f59e0b; vertical-align:middle; margin-right:4px;"></span>CVR (전환율)</span>
             </div>
         </div>
 
@@ -112,7 +112,7 @@
                         <span class="dot" style="background: {{ c.color }};"></span>
                         <span class="name">{{ c.name }}</span>
                         <span class="pct">{{ c.pct }}%</span>
-                        <span style="font-size:10px; color:#94a3b8; margin-left:4px;">CTR {{ c.ctr }}%</span>
+                        <span style="font-size:10px; color:#94a3b8; margin-left:4px;">클릭률 {{ c.ctr }}%</span>
                     </div>
                     {% endfor %}
                 </div>
@@ -151,12 +151,12 @@
 
 <!-- BIGQUERY 분석 (3 카드) -->
 <section class="section">
-    <div class="section-title">🔬 BIGQUERY 분석 <span class="pipe">|</span> <span class="sub">AD-HOC 분석</span></div>
+    <div class="section-title">🔬 빅쿼리 분석 <span class="pipe">|</span> <span class="sub">임시 조회</span></div>
     <div class="grid grid-3">
 
         <!-- Feature 분포 -->
         <div>
-            <div class="card-title">🧬 FEATURE 분포 <span style="color:#94a3b8; font-weight:500;">(VERTEX AI)</span></div>
+            <div class="card-title">🧬 피처 분포 <span style="color:#94a3b8; font-weight:500;">(Vertex AI)</span></div>
             {% if feature_dist %}
             {% for f in feature_dist %}
             <div style="margin-bottom:6px;">
@@ -207,12 +207,12 @@
 
 <!-- AI 모델 평가 (2 카드) -->
 <section class="section">
-    <div class="section-title">🤖 AI 모델 평가 <span class="pipe">|</span> <span class="sub">VERTEX AI · LIFESYNC_ML</span></div>
+    <div class="section-title">🤖 AI 모델 평가 <span class="pipe">|</span> <span class="sub">Vertex AI · LifeSync ML</span></div>
     <div class="grid grid-2">
 
         <!-- AI 예측 출현 분포 (히스토그램) -->
         <div>
-            <div class="card-title">📊 AI 예측 출현 분포 <span style="color:#94a3b8; font-weight:500;">(DYNAMODB)</span></div>
+            <div class="card-title">📊 AI 예측 출현 분포 <span style="color:#94a3b8; font-weight:500;">(DynamoDB)</span></div>
             {% if ddb_hist %}
             {% set hist_max = (ddb_hist|map(attribute='count')|max) or 1 %}
             <svg viewBox="0 0 400 180" style="width:100%; height:180px;">
@@ -233,27 +233,17 @@
 
         <!-- Precision / Recall -->
         <div>
-            <div class="card-title">🎯 PRECISION / RECALL <span style="color:#94a3b8; font-weight:500;">(AURORA MODEL_PERFORMANCE_HISTORY)</span></div>
+            <div class="card-title">🎯 정밀도 (Precision) <span style="color:#94a3b8; font-weight:500;">· 추천 중 실제 클릭 비율 · Aurora model_performance_history</span></div>
             {% for m in pr_models %}
             <div style="margin-bottom:14px;">
-                <div style="font-size:12px; font-weight:600; color:#1e293b; margin-bottom:6px;">{{ m.name }}</div>
-                <div style="margin-bottom:6px;">
-                    <div style="display:flex; justify-content:space-between; font-size:11px; margin-bottom:2px;">
-                        <span style="color:#64748b;">Precision</span>
-                        <span style="font-weight:700; color:#16a34a;">{{ m.precision }}%</span>
-                    </div>
-                    <div class="bar-track" style="height:6px;"><div class="bar-fill teal" style="width: {{ m.precision }}%;"></div></div>
+                <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:4px;">
+                    <span style="font-size:12px; font-weight:600; color:#1e293b;">{{ m.name }}</span>
+                    <span style="font-size:16px; font-weight:700; color:{{ '#16a34a' if m.precision >= 70 else '#dc2626' }};">{{ m.precision }}%</span>
                 </div>
-                <div>
-                    <div style="display:flex; justify-content:space-between; font-size:11px; margin-bottom:2px;">
-                        <span style="color:#64748b;">Recall</span>
-                        <span style="font-weight:700; color:#3b82f6;">{{ m.recall }}%</span>
-                    </div>
-                    <div class="bar-track" style="height:6px;"><div class="bar-fill" style="width: {{ m.recall }}%; background:#3b82f6;"></div></div>
-                </div>
+                <div class="bar-track" style="height:7px;"><div class="bar-fill" style="width: {{ m.precision }}%; background:{{ '#16a34a' if m.precision >= 70 else '#dc2626' }};"></div></div>
+                <div style="font-size:10px; color:#94a3b8; margin-top:3px;">기준치 70% {{ '✓ 충족' if m.precision >= 70 else '✗ 미달 — 재훈련 필요' }}</div>
             </div>
             {% endfor %}
-            <div style="background:#fef3c7; border-radius:6px; padding:8px 10px; margin-top:8px; font-size:11px; color:#92400e;">⚠ 모델 재훈련 권장 (VIP 예측 모델의 Precision이 70% 미만, 다음 배포 전 튜닝 필요)</div>
         </div>
 
     </div>

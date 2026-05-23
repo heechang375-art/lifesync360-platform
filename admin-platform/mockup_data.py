@@ -383,8 +383,8 @@ MOCKUP_DASH_KPI = [
     # Row 2: 추천 성과
     {'label': '누적 추천 이력',    'value': '487,290',     'sub': 'Aurora customer_recommend_history',       'accent': '#1e293b', 'is_status': False},
     {'label': '누적 활동 로그',    'value': '12.8M',       'sub': 'Aurora customer_dashboard_log',           'accent': '#f59e0b', 'is_status': False},
-    {'label': '추천 CTR (클릭률)', 'value': '14.2%',       'sub': 'SUM(clicked) / COUNT(*) · 실시간',        'accent': '#16a34a', 'is_status': False},
-    {'label': '구매 전환율 (CVR)', 'value': '9.8%',        'sub': 'SUM(purchased) / SUM(clicked) · 실시간',  'accent': '#3b82f6', 'is_status': False},
+    {'label': '추천 CTR (클릭률)', 'value': '14.2%',       'sub': 'SUM(clicked) / COUNT(*) · 전체 누적',     'accent': '#16a34a', 'is_status': False},
+    {'label': '구매 전환율 (CVR)', 'value': '9.8%',        'sub': 'SUM(purchased) / COUNT(*) · 전체 누적',   'accent': '#3b82f6', 'is_status': False},
     # Row 3: 인프라
     {'label': 'Redis Cache 수',    'value': '54,890',      'sub': 'rec:{global_id} · DBSIZE · TTL 6h',       'accent': '#dc2626', 'is_status': False},
 ]
@@ -393,7 +393,7 @@ MOCKUP_DASH_KPI = [
 MOCKUP_DASH_CLOUD3 = [
     {'badge': 'AWS', 'badge_bg': '#fef3c7', 'badge_color': '#d97706', 'title': 'AWS 클라우드', 'state': '8 / 8 정상', 'sub': 'Platform / Data / Group VM 3개 VPC'},
     {'badge': 'GCP', 'badge_bg': '#dbeafe', 'badge_color': '#2563eb', 'title': 'GCP 클라우드', 'state': '3 / 3 정상', 'sub': 'BigQuery · Vertex AI · Cloud Run'},
-    {'badge': 'ON',  'badge_bg': '#ccfbf1', 'badge_color': '#0f766e', 'title': 'On-Premises', 'state': '3 / 3 정상', 'sub': 'ls-db · ls-token · ls-api'},
+    {'badge': 'ON',  'badge_bg': '#ccfbf1', 'badge_color': '#0f766e', 'title': '온프레미스', 'state': '3 / 3 정상', 'sub': 'ls-db · ls-token · ls-api'},
 ]
 
 # ── P1 — S3 5카드 ────────────────────────────────────────
@@ -418,8 +418,8 @@ MOCKUP_DASH_RECENT_UPLOADS = [
 MOCKUP_AI_KPI4 = [
     {'label': '추천 CTR (클릭률)', 'value': '14.2%',  'sub': '↑ 1.3% (전주 대비)',           'accent': '#16a34a'},
     {'label': '거래율 CVR (전환)', 'value': '9.8%',   'sub': '↑ 0.8% (전주 대비)',           'accent': '#3b82f6'},
-    {'label': 'AI 예측 적중 평균', 'value': '0.42',   'sub': 'vip_prob / signup / rec 평균', 'accent': '#1e293b'},
-    {'label': '분석 대상 고객',    'value': '60,000', 'sub': 'DynamoDB 보유',                'accent': '#6366f1'},
+    {'label': '마지막 배치 갱신',   'value': '-',      'sub': 'DynamoDB · 배치 갱신 시각',   'accent': '#1e293b'},
+    {'label': '분석 대상 고객',    'value': '60,000', 'sub': 'DynamoDB · AI 분석 완료 고객', 'accent': '#6366f1'},
 ]
 
 MOCKUP_AI_CAT_DONUT = [
@@ -485,8 +485,8 @@ MOCKUP_AI_DDB_HISTOGRAM = [
 ]
 
 MOCKUP_AI_PR_MODELS = [
-    {'name': 'VIP 예측 모델',  'precision': 66.7, 'recall': 80.9},
-    {'name': '추천 반응 모델', 'precision': 81.2, 'recall': 75.4},
+    {'name': 'VIP 예측 모델',  'precision': 66.7},
+    {'name': '추천 반응 모델', 'precision': 81.2},
 ]
 
 
@@ -502,7 +502,7 @@ MOCKUP_NET_TOPOLOGY = {
 }
 
 MOCKUP_NET_AWS_PLATFORM = {
-    'title': 'AWS Platform VPC', 'badge': 'HEX', 'badge_bg': '#fef3c7', 'badge_color': '#d97706',
+    'title': 'AWS 플랫폼 VPC', 'badge': '', 'badge_bg': '', 'badge_color': '',
     'rows': [
         {'name': 'Aurora Cluster',     'state': 'available', 'state_color': '#16a34a', 'sub': '10.0.x.x / 3306'},
         {'name': 'ElastiCache Redis',  'state': 'available', 'state_color': '#16a34a', 'sub': '10.0.x.x / 6379'},
@@ -514,7 +514,7 @@ MOCKUP_NET_AWS_PLATFORM = {
 }
 
 MOCKUP_NET_AWS_DATA = {
-    'title': 'AWS Data VPC', 'badge': 'PRIV', 'badge_bg': '#fef3c7', 'badge_color': '#d97706',
+    'title': 'AWS 데이터 VPC', 'badge': 'PRIV', 'badge_bg': '#fef3c7', 'badge_color': '#d97706',
     'rows': [
         {'name': 'Glue Jobs',         'state': 'SUCCEEDED', 'state_color': '#16a34a', 'sub': '06:00 batch + ad-hoc 12'},
         {'name': 'EMR Cluster',       'state': 'WAITING',   'state_color': '#f59e0b', 'sub': 'm5.xl x 3 · idle'},
@@ -525,7 +525,7 @@ MOCKUP_NET_AWS_DATA = {
 }
 
 MOCKUP_NET_AWS_GROUPVM = {
-    'title': 'AWS Group VM VPC', 'badge': '', 'badge_bg': '', 'badge_color': '',
+    'title': 'AWS 그룹 VM VPC', 'badge': '', 'badge_bg': '', 'badge_color': '',
     'rows': [
         {'name': 'BANK EC2',     'state': '',      'state_color': '',         'sub': 'i-0a1 · 10.0.x.x'},
         {'name': 'CARD EC2',     'state': '',      'state_color': '',         'sub': 'i-0a2 · 10.0.x.x'},
@@ -538,8 +538,23 @@ MOCKUP_NET_AWS_GROUPVM = {
     ],
 }
 
+MOCKUP_NET_AWS_WEARABLE = {
+    'title': 'AWS 웨어러블 VPC', 'badge': 'PRIV', 'badge_bg': '#fce7f3', 'badge_color': '#db2777',
+    'rows': [
+        {'name': 'Kinesis Stream',  'state': 'ACTIVE', 'state_color': '#16a34a', 'sub': 'lifesync-kinesis-wearable-stream'},
+        {'name': 'Wearable EC2',    'state': '',        'state_color': '',        'sub': 'Kinesis consumer · agent'},
+    ],
+}
+
+MOCKUP_NET_AWS_MANAGEMENT = {
+    'title': 'AWS 관리 VPC', 'badge': 'PRIV', 'badge_bg': '#e0e7ff', 'badge_color': '#4f46e5',
+    'rows': [
+        {'name': 'Admin EC2', 'state': '', 'state_color': '', 'sub': 'Windows Server 2022 · admin dashboard'},
+    ],
+}
+
 MOCKUP_NET_AWS_CONNECTIVITY = {
-    'title': 'AWS Connectivity', 'badge': 'HEX', 'badge_bg': '#fef3c7', 'badge_color': '#d97706',
+    'title': 'AWS 연결 현황', 'badge': '', 'badge_bg': '', 'badge_color': '',
     'rows': [
         {'name': 'Transit Gateway',    'state': 'available', 'state_color': '#16a34a', 'sub': 'tgw-0a3b8c2 · att 3'},
         {'name': 'Site to Site VPN',   'state': 'UP / UP',   'state_color': '#16a34a', 'sub': '2 tunnels · BGP 65000'},
@@ -559,7 +574,7 @@ MOCKUP_NET_GCP = {
 }
 
 MOCKUP_NET_ONPREM = {
-    'title': 'On-Prem VirtualBox', 'badge': 'Local Lab', 'badge_bg': '#e0e7ff', 'badge_color': '#4f46e5',
+    'title': '온프레미스 (VirtualBox)', 'badge': 'Local Lab', 'badge_bg': '#e0e7ff', 'badge_color': '#4f46e5',
     'rows': [
         {'name': 'VirtualBox VM (3)',    'state': 'Running',   'state_color': '#16a34a', 'sub': 'all VMs running'},
         {'name': 'Local MySQL',          'state': 'Healthy',   'state_color': '#16a34a', 'sub': '3306 · lifesync 8.0'},

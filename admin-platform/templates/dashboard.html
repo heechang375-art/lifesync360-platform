@@ -7,7 +7,7 @@
 
 <!-- KPI CARDS — 고객 / 추천 누적 / 실시간 지표 (3×3 = 9, 설계서 V5) -->
 <section class="section">
-    <div class="section-title">📊 KPI CARDS <span class="pipe">|</span> <span class="sub">고객 / 추천 현황</span><span class="ts" id="ts-kpi">갱신: --:--:--</span></div>
+    <div class="section-title">📊 핵심 지표 <span class="pipe">|</span> <span class="sub">고객 / 추천 현황</span><span class="ts" id="ts-kpi">갱신: --:--:--</span></div>
     <div class="grid grid-3">
         {% for k in kpi %}
         <div class="kpi" id="kpi-card-{{ loop.index0 }}" style="border-left-color: {{ k.accent }};">
@@ -25,7 +25,7 @@
 
 <!-- CLOUD STATUS — 상태 요약 (3카드) -->
 <section class="section">
-    <div class="section-title">☁️ CLOUD STATUS <span class="pipe">|</span> <span class="sub">상태 요약</span><span class="ts" id="ts-cloud">갱신: --:--:--</span></div>
+    <div class="section-title">☁️ 클라우드 현황 <span class="pipe">|</span> <span class="sub">상태 요약</span><span class="ts" id="ts-cloud">갱신: --:--:--</span></div>
     <div class="grid grid-3">
         {% for c in cloud3 %}
         <div class="cloud-card">
@@ -51,7 +51,7 @@
 
 <!-- S3 INGESTION — 데이터 적재 현황 (5카드) -->
 <section class="section">
-    <div class="section-title">📦 S3 INGESTION <span class="pipe">|</span> <span class="sub">데이터 적재 현황</span><span class="ts" id="ts-s3">갱신: --:--:--</span></div>
+    <div class="section-title">📦 S3 적재 현황 <span class="pipe">|</span> <span class="sub">도메인별 데이터 적재</span><span class="ts" id="ts-s3">갱신: --:--:--</span></div>
     <div class="grid grid-5">
         {% for s in s3_cards %}
         <div class="s3-card">

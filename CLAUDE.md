@@ -61,6 +61,30 @@ UI/기능 변경 시 파일을 열기 전에 다음을 텍스트로 먼저 말�
 
 ---
 
+## 플랫폼 기본 정책·기본값 사전 확인
+
+**OS / 클라우드 서비스의 기본 정책·기본값을 추측으로 가정하지 마. 한 번 조회한 후 그에 맞춰 코드 짜.**
+
+특히 다음은 "기본값으로 통과하겠지" 라고 가정하면 조용히 실패함 — 명령은 성공한 것처럼 보이는데 결과는 안 들어가:
+
+- **Windows**: 비밀번호 복잡성(8자 + 대/소/숫자/특수 중 3가지), Administrator 기본 비활성, RDP NLA, ExecutionPolicy
+- **Linux**: PAM 비밀번호 정책(`/etc/security/pwquality.conf`), SELinux/AppArmor enforcing 여부, sudoers requiretty, systemd 서비스 NoNewPrivileges
+- **AWS IAM**: Trust policy 빈 값 = 거부, SCP 상위 거부 우선, 신규 리전 기본 비활성
+- **AWS Security Group**: 인바운드 기본 거부 / 아웃바운드 기본 전체 허용 — 둘 비대칭
+- **AWS S3**: BlockPublicAccess 기본 ON (2023+), 기본 암호화 SSE-S3
+- **AWS RDS/Aurora**: Data API 기본 OFF, 백업 보존 7일, 퍼블릭 액세스 기본 No
+- **Database**: MySQL `sql_mode=STRICT_TRANS_TABLES` 기본 ON (8.0+), PostgreSQL `default_transaction_isolation=read committed`
+- **Kubernetes**: NetworkPolicy 없으면 전체 허용, PSA 기본 namespace 라벨
+
+**사전 확인 순서**:
+1. 정책 영향 받는 명령 짜기 전에 현재 정책 조회 (예: `net accounts`, `aws iam get-account-password-policy`, `SHOW VARIABLES LIKE 'sql_mode'`)
+2. 정책 알면 그 정책에 맞는 값으로 작성. 정책 자체를 변경할 일이면 사용자 승인 받기
+3. 명령 실행 후 결과 검증 (변경 사항이 실제 반영됐는지 별도 조회). 명령이 exit 0 이어도 "조용히 무시"되는 경우 흔함
+
+**"임의의 그럴듯한 기본값"을 박는 행위 금지**: `admin123`, `password123`, `0.0.0.0/0`, `*` 같은 값은 정책 거부되거나 보안 사고로 직결됨. 정책 충족 + 보안 합리적 값을 짧게라도 검증 후 사용.
+
+---
+
 ## 코드 작성 원칙
 
 **최소한의 코드로 문제를 해결해. 추측성 코드는 넣지 마.**

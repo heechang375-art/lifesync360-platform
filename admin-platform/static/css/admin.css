@@ -114,6 +114,12 @@ tbody tr:hover td { background: #f8fafc; }
 /* ── Pill Badge group ── */
 .pill-group { display: flex; flex-wrap: wrap; gap: 6px; }
 .pill { display: inline-block; padding: 3px 9px; border-radius: 4px; font-size: 11px; font-weight: 700; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; }
+.badge-vip    { background: #fee2e2; color: #dc2626; }
+.badge-gold   { background: #fef3c7; color: #d97706; }
+.badge-silver { background: #dbeafe; color: #2563eb; }
+.badge-basic  { background: #dcfce7; color: #16a34a; }
+.badge-care   { background: #f1f5f9; color: #64748b; }
 .pill-blue   { background: #dbeafe; color: #2563eb; }
 .pill-amber  { background: #fef3c7; color: #d97706; }
 .pill-teal   { background: #ccfbf1; color: #0f766e; }

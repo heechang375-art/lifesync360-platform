@@ -18,7 +18,7 @@
             <a class="tab {% if active == 'dashboard' %}active{% endif %}" href="{{ url_for('dashboard') }}">전체 현황</a>
             <a class="tab {% if active == 'customer' %}active{% endif %}"  href="{{ url_for('users') }}">Customer 360</a>
             <a class="tab {% if active == 'ai' %}active{% endif %}"        href="{{ url_for('ai') }}">AI 추천</a>
-            <a class="tab {% if active == 'ops' %}active{% endif %}"       href="{{ url_for('ops') }}">Network</a>
+            <a class="tab {% if active == 'ops' %}active{% endif %}"       href="{{ url_for('ops') }}">네트워크</a>
         </nav>
         <div class="header-right">
             <span class="user-status"><span class="status-dot"></span> {{ config.ADMIN_USER }}@lifesync</span>
