@@ -122,7 +122,7 @@ def _get_aesgcm():
         kb = os.environ.get('TOKEN_AES_KEY_B64')
         if not kb:
             raise HTTPException(status_code=500, detail='TOKEN_AES_KEY_B64 not configured')
-        _aesgcm = AESGCM(base64.b64decode(kb))
+        _aesgcm = AESGCM(base64.urlsafe_b64decode(kb))
     return _aesgcm
 
 

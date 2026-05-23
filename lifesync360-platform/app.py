@@ -1,7 +1,5 @@
 import os
 import datetime
-import hashlib
-import uuid
 import json as _json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timezone
@@ -15,24 +13,8 @@ app = Flask(__name__)
 JWT_SECRET          = os.environ.get('JWT_SECRET')
 if not JWT_SECRET:
     raise RuntimeError('JWT_SECRET 환경변수 누락 — IaC env 주입 확인 필요')
-USE_MOCK            = os.environ.get('USE_MOCK', 'true').lower() != 'false'
-PROFILE_SYNC_LAMBDA  = os.environ.get('PROFILE_SYNC_LAMBDA', '')
 ONPREM_QUERY_LAMBDA  = os.environ.get('ONPREM_QUERY_LAMBDA', 'lifesync-onprem-customer-query')
 AWS_REGION           = os.environ.get('AWS_REGION', 'ap-northeast-2')
-
-# mock_data는 항상 import (인증 + USE_MOCK 분기 둘 다에서 사용)
-from mock_data import (
-    MOCK_USERS, MOCK_RECOMMENDATIONS, PRODUCTS_MAP, get_mock_health,
-)
-
-COMPANIES = [
-    {'key': 'BANK',       'name': 'LS 은행'},
-    {'key': 'CARD',       'name': 'LS 카드'},
-    {'key': 'INSURANCE',  'name': 'LS 보험'},
-    {'key': 'SECURITIES', 'name': 'LS 증권'},
-    {'key': 'HEALTHCARE', 'name': 'LS 헬스케어'},
-    {'key': 'HOSPITAL',   'name': 'LS 병원'},
-]
 
 CONSENTS = [
     {
@@ -131,9 +113,7 @@ _dynamo = None
 def get_redis():
     global _redis
     if _redis is None:
-        host = os.environ.get('REDIS_HOST','lif-re-1sqfju15n8thy')
-        if not host:
-            raise RuntimeError('REDIS_HOST 환경변수가 설정되지 않았습니다.')
+        host = os.environ.get('REDIS_HOST', 'lif-re-1sqfju15n8thy')
         _redis = redis.Redis(host=host, port=int(os.environ.get('REDIS_PORT', '6379')), decode_responses=True)
     return _redis
 
@@ -154,6 +134,10 @@ def get_db():
         cursorclass=pymysql.cursors.DictCursor,
     )
 
+class AuthError(Exception):
+    pass
+
+
 def _call_onprem(action, **kwargs):
     """온프레미스 조회 Lambda 호출 — Control Node 경유"""
     if not ONPREM_QUERY_LAMBDA:
@@ -166,6 +150,8 @@ def _call_onprem(action, **kwargs):
     result = _json.loads(resp['Payload'].read())
     status = result.get('statusCode', 200)
     body   = _json.loads(result['body']) if isinstance(result.get('body'), str) else result
+    if status == 401:
+        raise AuthError(body.get('error') or body.get('detail') or '인증 실패')
     if status not in (200,):
         raise ValueError(body.get('error') or body.get('detail') or '온프레미스 오류')
     return body
@@ -179,23 +165,6 @@ def _get_lambda():
     if _lambda_client is None:
         _lambda_client = boto3.client('lambda', region_name=AWS_REGION)
     return _lambda_client
-
-def _resolve_global_id(ls_user_id, email):
-    if not PROFILE_SYNC_LAMBDA:
-        return None
-    try:
-        resp = _get_lambda().invoke(
-            FunctionName=PROFILE_SYNC_LAMBDA,
-            InvocationType='RequestResponse',
-            Payload=_json.dumps({'ls_user_id': ls_user_id, 'email': email}),
-        )
-        result = _json.loads(resp['Payload'].read())
-        if result.get('statusCode') == 200:
-            return _json.loads(result['body'])['global_id']
-    except Exception:
-        pass
-    return None
-
 
 # ── JWT ───────────────────────────────────────────────
 def make_jwt(ls_user_id, global_id):
@@ -231,15 +200,10 @@ def api_login():
     email    = data.get('email', '')
     password = data.get('password', '')
 
-    if USE_MOCK:
-        user = MOCK_USERS.get(email)
-        if not user or hashlib.sha256(password.encode('utf-8')).hexdigest() != user['password_hash']:
-            return jsonify({'error': '이메일 또는 비밀번호가 올바르지 않습니다.'}), 401
-        token = make_jwt(user['ls_user_id'], user['global_id'])
-        return jsonify({'token': token, 'ls_user_id': user['ls_user_id']})
-
     try:
         result = _call_onprem('login', email=email, password=password)
+    except AuthError as e:
+        return jsonify({'error': str(e)}), 401
     except Exception as e:
         app.logger.error('login lambda 호출 실패: %s', e)
         return jsonify({'error': '인증 서비스에 연결할 수 없습니다.'}), 503
@@ -248,40 +212,23 @@ def api_login():
         return jsonify({'error': '이메일 또는 비밀번호가 올바르지 않습니다.'}), 401
 
     token = make_jwt(result['ls_user_id'], result['global_id'])
+
+    # 동의 캐시 background warm-up (fire-and-forget, 실패 무시)
+    _gid = result['global_id']
+    def _warm_consent():
+        try:
+            r = _call_onprem('get_consent', global_id=_gid)
+            _consent_cache_set(_gid, _extract_consented_domains(r.get('consents', [])))
+        except Exception:
+            pass
+    _consent_warm_pool.submit(_warm_consent)
+
     return jsonify({'token': token, 'ls_user_id': result['ls_user_id']})
 
 
 @app.route('/api/me')
 @require_jwt
 def api_me(payload):
-    if USE_MOCK:
-        user = next((u for u in MOCK_USERS.values() if u['ls_user_id'] == payload['sub']), None)
-        if not user:
-            return jsonify({'error': 'user not found'}), 404
-        return jsonify({
-            'ls_user_id': payload['sub'],
-            'global_id':  payload['gid'],
-            'name':       user['name'],
-            'grade':      user['grade'],
-            'email':      user['email'],
-            # 인구통계 (customer_360_profile)
-            'gender':        user.get('gender'),
-            'age_band':      user.get('age_band'),
-            'region':        user.get('region'),
-            'income_grade':  user.get('income_grade'),
-            'asset_grade':   user.get('asset_grade'),
-            'wearable_flag': user.get('wearable_flag'),
-            # 마스터 (master_customer)
-            'customer_status':  user.get('customer_status'),
-            'vip_grade':        user.get('vip_grade'),
-            'customer_type':    user.get('customer_type'),
-            'first_created_dt': user.get('first_created_dt'),
-            'last_login_dt':    user.get('last_login_dt'),
-        })
-
-    # Mock 유저 fallback 준비 (Lambda 미배포 검증용)
-    _mock_user = next((u for u in MOCK_USERS.values() if u['ls_user_id'] == payload['sub']), None)
-
     global_id = payload['gid']
 
     with ThreadPoolExecutor(max_workers=4) as pool:
@@ -296,8 +243,7 @@ def api_me(payload):
             login_email = user.get('login_email')
             global_id   = user.get('global_id', global_id)
         except Exception:
-            if _mock_user:
-                login_email = _mock_user.get('email')
+            pass
 
         grade = None
         try:
@@ -315,11 +261,14 @@ def api_me(payload):
         try:
             name = fut_pii.result().get('name')
         except Exception:
-            if _mock_user:
-                name = _mock_user.get('name')
+            pass
 
     consents = onprem.get('consents', []) if onprem else []
     profile  = ((onprem or {}).get('customer') or {}).get('profile') or {}
+
+    # 동의 캐시 갱신 (Redis SETEX 24h) — 다음 /api/recommendations 등에서 cache hit
+    if consents:
+        _consent_cache_set(global_id, _extract_consented_domains(consents))
 
     return jsonify({
         'ls_user_id': payload['sub'],
@@ -336,14 +285,23 @@ def api_me(payload):
 @app.route('/api/consent', methods=['POST'])
 @require_jwt
 def api_consent(payload):
-    if USE_MOCK:
-        return jsonify({'status': 'ok'})
-
-    consents = request.get_json().get('consents', [])
+    consents = (request.get_json() or {}).get('consents', [])
     try:
         _call_onprem('save_consent', global_id=payload['gid'], consents=consents)
     except ValueError as e:
         return jsonify({'error': str(e)}), 500
+
+    # 변경 즉시 캐시 갱신 — get_consent live 로 정확한 도메인 재조회 (short form 보장).
+    # 실패 시 캐시 invalidate (다음 호출에서 fresh fetch).
+    try:
+        r = _call_onprem('get_consent', global_id=payload['gid'])
+        _consent_cache_set(payload['gid'], _extract_consented_domains(r.get('consents', [])))
+    except Exception:
+        try:
+            get_redis().delete(f"consent:{payload['gid']}")
+        except Exception:
+            pass
+
     return jsonify({'status': 'ok'})
 
 
@@ -366,9 +324,6 @@ def api_event(payload):
       banner_click         → MAIN  + banner_click='Y'
       tab_click            → MAIN
     """
-    if USE_MOCK:
-        return jsonify({'status': 'ok'})
-
     data        = request.get_json() or {}
     event_type  = data.get('event_type', '')
     product_id  = data.get('product_id')
@@ -416,6 +371,63 @@ def api_event(payload):
 
 
 # NBA → recommend_rule.action_code 매핑 (results.csv 의 next_best_action 컬럼 기준)
+# ── 동의(consent) 캐시 + fallback ─────────────────────────────────
+
+_ALL_CONSENT_DOMAINS = ['BANK', 'CARD', 'SEC', 'INS', 'ONINS', 'HLT', 'HOS', 'WBL']
+
+_consent_warm_pool = ThreadPoolExecutor(max_workers=4)
+
+def _extract_consented_domains(consents):
+    """consent list → 활성 도메인 list (consent_flag='Y' AND revoke_dt IS NULL)"""
+    if not consents:
+        return []
+    return [
+        c['domain'] for c in consents
+        if c.get('consent_flag') == 'Y' and not c.get('revoke_dt')
+    ]
+
+def _consent_cache_set(global_id, domains):
+    """Redis consent:{gid} SETEX 24h. 실패 무시."""
+    try:
+        get_redis().setex(f'consent:{global_id}', 86400, _json.dumps(domains))
+    except Exception:
+        pass
+
+def _consent_cache_get(global_id):
+    """Redis consent:{gid} GET. miss/error → None."""
+    try:
+        c = get_redis().get(f'consent:{global_id}')
+        if c is not None:
+            return _json.loads(c)
+    except Exception:
+        pass
+    return None
+
+def _get_consents_with_fallback(global_id, ddb_has_row):
+    """
+    Returns: (consented_domains: list[str], source: str)
+    Order: cache → live → ddb_fallback → none
+
+      cache         : Redis consent:{gid} (TTL 24h; login/me/consent POST 가 갱신)
+      live          : _call_onprem('get_consent') Lambda → 활성 도메인 (성공 시 캐시 갱신)
+      ddb_fallback  : DDB row 있으면 = 분석 파이프라인 통과한 동의자 → 전 도메인 (fail-open)
+      none          : 셋 다 실패 → 빈 list
+    """
+    cached = _consent_cache_get(global_id)
+    if cached is not None:
+        return cached, 'cache'
+    try:
+        resp = _call_onprem('get_consent', global_id=global_id)
+        domains = _extract_consented_domains(resp.get('consents', []))
+        _consent_cache_set(global_id, domains)
+        return domains, 'live'
+    except Exception:
+        pass
+    if ddb_has_row:
+        return list(_ALL_CONSENT_DOMAINS), 'ddb_fallback'
+    return [], 'none'
+
+
 _NBA_TO_ACTION = {
     'RETENTION':         'RECOMMEND_HEALTH',
     'INSURANCE_UPSELL':  'RECOMMEND_INSURANCE',
@@ -431,35 +443,6 @@ _NBA_TO_ACTION = {
     'WELLNESS':          'RECOMMEND_WELLNESS',
     'TELEMED':           'RECOMMEND_TELEMED',
 }
-
-
-def _recommendations_mock():
-    flat = []
-    for rec in MOCK_RECOMMENDATIONS:
-        for p in rec.get('products', []):
-            flat.append({
-                'product_id'   : p.get('id'),
-                'product_code' : p.get('id'),
-                'product_name' : p.get('name'),
-                'description'  : p.get('desc', ''),
-                'category_code': (rec.get('key') or '').upper(),
-                'category_name': rec.get('name', ''),
-                'company_code' : (rec.get('key') or '').upper(),
-                'company_name' : rec.get('name', ''),
-                'risk_level'   : p.get('tag', ''),
-                'target_grade' : p.get('type', ''),
-                'priority_rank': 0,
-            })
-    flat = flat[:20]
-    for i, p in enumerate(flat):
-        p['reason']               = f'VIP 등급 + {p.get("category_name","")} 카테고리 매칭'
-        p['rec_rank']             = i + 1
-        p['recommendation_score'] = max(60, 95 - i * 4)
-    return {
-        'meta'    : {'grade': 'VIP', 'score': 90.0, 'health': 88.0,
-                     'vip_prob': 0.85, 'next_best_action': 'PB'},
-        'products': flat,
-    }
 
 
 def _ddb_get_latest(global_id):
@@ -478,7 +461,7 @@ def _ddb_get_latest(global_id):
         return {}
 
 def _fetch_ddb_meta(global_id):
-    """DDB lifesync_customer_result → (grade, dynamic_score, health_score, vip_prob, nba)"""
+    """DDB lifesync_customer_result → (grade, dynamic_score, health_score, vip_prob, nba, has_row)"""
     item = _ddb_get_latest(global_id)
     return (
         item.get('dynamic_grade', 'BASIC'),
@@ -486,6 +469,7 @@ def _fetch_ddb_meta(global_id):
         float(item.get('health_score')  or 0),
         float(item.get('vip_prob')      or 0),
         item.get('next_best_action'),
+        bool(item),
     )
 
 
@@ -536,8 +520,19 @@ def _match_rules(cur, grade, dynamic_score, health_score, vip_required_flag, tar
     return cat_list, rule_action_by_cat
 
 
-def _fetch_products(cur, cached_ids, cat_list, dynamic_score, grade):
-    """3 모드: cache hit → id 조회 / category 매칭 → top2*N / fallback → score 기반 LIMIT 20."""
+def _fetch_products(cur, cached_ids, cat_list, dynamic_score, grade, consented_domains=None):
+    """3 모드: cache hit → id 조회 / category 매칭 → top2*N / fallback → score 기반 LIMIT 20.
+    consented_domains: None → 필터 미적용 / list → AND c.company_code IN (...) 추가.
+    (cache hit 분기는 그대로 — 캐시는 이미 동의 필터링된 결과 가정, TTL 6h 안에서만 stale)"""
+    consent_where = ""
+    consent_params = []
+    if consented_domains is not None:
+        if not consented_domains:
+            return []  # 동의 도메인 0개 → 추천 0개 (fail-closed)
+        cph = ', '.join(['%s'] * len(consented_domains))
+        consent_where  = f" AND c.company_code IN ({cph})"
+        consent_params = list(consented_domains)
+
     if cached_ids:
         placeholders = ', '.join(['%s'] * len(cached_ids))
         cur.execute(f"""
@@ -566,8 +561,9 @@ def _fetch_products(cur, cached_ids, cat_list, dynamic_score, grade):
             WHERE p.active_flag = 'Y'
               AND cat.category_code IN ({cat_placeholders})
               AND p.min_score <= %s
+              {consent_where}
             ORDER BY FIELD(cat.category_code, {cat_placeholders}), p.priority_rank
-        """, cat_list + [dynamic_score] + cat_list)
+        """, cat_list + [dynamic_score] + consent_params + cat_list)
         for r in cur.fetchall():
             if r['rn'] <= 2:
                 r.pop('rn', None)
@@ -577,7 +573,7 @@ def _fetch_products(cur, cached_ids, cat_list, dynamic_score, grade):
 
     if not products:
         min_score = GRADE_SCORE_MAP.get(grade, 60)
-        cur.execute("""
+        cur.execute(f"""
             SELECT p.product_id, p.product_code, p.product_name, p.description,
                    p.target_grade, p.risk_level, p.priority_rank,
                    c.company_code, c.company_name, cat.category_code, cat.category_name
@@ -585,8 +581,9 @@ def _fetch_products(cur, cached_ids, cat_list, dynamic_score, grade):
             JOIN company_master   c   ON p.company_id  = c.company_id
             JOIN category_master  cat ON p.category_id = cat.category_id
             WHERE p.active_flag = 'Y' AND p.min_score <= %s
+              {consent_where}
             ORDER BY p.priority_rank LIMIT 20
-        """, (min_score,))
+        """, [min_score] + consent_params)
         products = cur.fetchall()
 
     return products
@@ -639,11 +636,23 @@ def api_recommendations(payload):
       ⑤ category별 product_master 매칭 (각 카테고리당 top 2, 합쳐서 LIMIT 20)
       ⑥ customer_recommend_history INSERT + Redis 캐시 갱신
     """
-    if USE_MOCK:
-        return jsonify(_recommendations_mock())
-
     global_id = payload['gid']
-    grade, dynamic_score, health_score, vip_prob, nba = _fetch_ddb_meta(global_id)
+    grade, dynamic_score, health_score, vip_prob, nba, ddb_has_row = _fetch_ddb_meta(global_id)
+
+    # 동의 조회 (cache → live → ddb_fallback → none)
+    consented_domains, consent_source = _get_consents_with_fallback(global_id, ddb_has_row)
+    if consent_source == 'none' or not consented_domains:
+        msg = ('동의 정보를 확인할 수 없습니다. 잠시 후 다시 시도해주세요.'
+               if consent_source == 'none'
+               else '동의한 계열사가 없어 추천 상품이 없습니다. 설정에서 동의를 등록해주세요.')
+        return jsonify({
+            'meta'    : {'grade': grade, 'score': dynamic_score, 'health': health_score,
+                         'vip_prob': vip_prob, 'next_best_action': nba,
+                         'consent_source': consent_source},
+            'products': [],
+            'message' : msg,
+        })
+
     cached_ids = _fetch_redis_cached_ids(global_id)
 
     target_action     = _NBA_TO_ACTION.get(str(nba or '').upper())
@@ -660,7 +669,10 @@ def api_recommendations(payload):
                 cat_list, rule_action_by_cat = _match_rules(
                     cur, grade, dynamic_score, health_score, vip_required_flag, target_action,
                 )
-            products = _fetch_products(cur, cached_ids, cat_list, dynamic_score, grade)
+            products = _fetch_products(
+                cur, cached_ids, cat_list, dynamic_score, grade,
+                consented_domains=consented_domains,
+            )
             _enrich_and_record(
                 cur, products, global_id, grade, dynamic_score, health_score,
                 vip_required_flag, target_action, nba, rule_action_by_cat,
@@ -682,7 +694,8 @@ def api_recommendations(payload):
 
     return jsonify({
         'meta'    : {'grade': grade, 'score': dynamic_score, 'health': health_score,
-                     'vip_prob': vip_prob, 'next_best_action': nba},
+                     'vip_prob': vip_prob, 'next_best_action': nba,
+                     'consent_source': consent_source},
         'products': products,
     })
 
@@ -694,20 +707,6 @@ def api_my_applications(payload):
     내 신청 내역 — customer_product_application + product/company JOIN.
     status (RECEIVED/IN_REVIEW/APPROVED/REJECTED/CANCELED) + 상품 정보.
     """
-    if USE_MOCK:
-        # 시연용 mock — 최근 신청 3건 가정
-        return jsonify([
-            {'application_id':'APP-20260517100000-AABBCC','product_code':'HLT-HEALTHCARE-00012-03',
-             'product_name':'VIP 종합 건강검진','company_name':'LS 헬스케어','category_name':'헬스케어',
-             'status':'IN_REVIEW','created_at':'2026-05-17 10:00:00'},
-            {'application_id':'APP-20260515143020-AABBCC','product_code':'INS-INSURANCE-00045-02',
-             'product_name':'프리미엄 실손 보험','company_name':'LS 보험','category_name':'보험',
-             'status':'APPROVED','created_at':'2026-05-15 14:30:20'},
-            {'application_id':'APP-20260510091505-AABBCC','product_code':'BANK-DEPOSIT-00001-01',
-             'product_name':'PB 우대 정기예금 12개월','company_name':'LS 은행','category_name':'예금',
-             'status':'RECEIVED','created_at':'2026-05-10 09:15:05'},
-        ])
-
     db = get_db()
     try:
         with db.cursor() as cur:
@@ -741,7 +740,6 @@ def health():
         'status': 'ok',
         'jwt_from_env': bool(os.environ.get('JWT_SECRET')),
         'jwt_len':      len(JWT_SECRET),
-        'use_mock':     USE_MOCK,
         'dynamo_table': os.environ.get('DYNAMO_TABLE', 'NOT_SET'),
     }
 
@@ -749,10 +747,6 @@ def health():
 @app.route('/api/dashboard')
 @require_jwt
 def api_dashboard(payload):
-    if USE_MOCK:
-        h = get_mock_health(payload['sub'])
-        return jsonify({**h, 'no_data': False})
-
     item = _ddb_get_latest(payload['gid'])
     if not item:
         return jsonify({'no_data': True})
@@ -781,12 +775,6 @@ def settings():
 
 @app.route('/product/<product_code>')
 def product(product_code):
-    if USE_MOCK:
-        item = PRODUCTS_MAP.get(product_code)
-        if not item:
-            return redirect(url_for('dashboard'))
-        return render_template('product.html', item=item)
-
     db = get_db()
     try:
         with db.cursor() as cur:
@@ -826,14 +814,6 @@ def product(product_code):
 @app.route('/product/<product_code>/apply')
 def product_apply(product_code):
     """상품 신청 페이지 — product.html '신청하기' 클릭 시 이동."""
-    if USE_MOCK:
-        m = PRODUCTS_MAP.get(product_code)
-        if not m:
-            return redirect(url_for('dashboard'))
-        item = {'id': product_code, 'name': m['name'], 'desc': m.get('desc', ''),
-                'category': m.get('category', ''), 'product_id': None}
-        return render_template('apply.html', item=item)
-
     db = get_db()
     try:
         with db.cursor() as cur:
@@ -872,14 +852,10 @@ def api_product_apply(product_code, payload):
     INSERT 시점에는 4컬럼 (status default 'RECEIVED', 나머지 자동/NULL).
     컨택 정보(이름/전화/금액/메모/마케팅동의) 는 별도 시스템 책임 — Aurora 미저장.
     """
-    if USE_MOCK:
-        application_id = f"APP-{datetime.datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{payload['sub'][-6:]}"
-        return jsonify({'status': 'ok', 'application_id': application_id})
-
     db = get_db()
     try:
         with db.cursor() as cur:
-            # 온프레미스 users 테이블에서 실제 ls_user_id 조회 (JWT mock 값과 다를 수 있음)
+            # JWT sub보다 온프레미스 users 테이블의 ls_user_id가 권위적 — 재조회
             real_ls_user_id = payload['sub']
             try:
                 u = _call_onprem('get_user_by_global', global_id=payload['gid'])
@@ -890,15 +866,26 @@ def api_product_apply(product_code, payload):
 
             application_id = f"APP-{datetime.datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{real_ls_user_id[-6:]}"
 
-            # product_id 조회 (apply.html 이 보내준 product_id 가 null/모를 수도 있어 안전하게 재조회)
-            cur.execute(
-                "SELECT product_id FROM product_master WHERE product_code = %s AND active_flag = 'Y'",
-                (product_code,),
-            )
+            # product_id + company_code 조회 (apply.html 이 보내준 product_id 가 null/모를 수도 있어 안전하게 재조회)
+            cur.execute("""
+                SELECT p.product_id, c.company_code
+                FROM product_master p
+                JOIN company_master c ON p.company_id = c.company_id
+                WHERE p.product_code = %s AND p.active_flag = 'Y'
+            """, (product_code,))
             row = cur.fetchone()
-            product_id = row['product_id'] if row else None
-            if not product_id:
+            if not row:
                 return jsonify({'error': '상품을 찾을 수 없습니다.'}), 404
+            product_id   = row['product_id']
+            company_code = row['company_code']
+
+            # 동의 검증 — 비동의 회사 상품 신청 차단
+            item = _ddb_get_latest(payload['gid'])
+            consented_domains, consent_source = _get_consents_with_fallback(payload['gid'], bool(item))
+            if consent_source == 'none':
+                return jsonify({'error': '동의 정보를 확인할 수 없습니다. 잠시 후 다시 시도해주세요.'}), 503
+            if company_code not in consented_domains:
+                return jsonify({'error': f'{company_code} 계열사 동의가 필요한 상품입니다. 동의 후 다시 신청해주세요.'}), 403
 
             # 신청 INSERT — Service-DB/9.customer_product_application.sql (v3, 9컬럼) 단일 출처
             cur.execute("""
@@ -921,8 +908,9 @@ def api_product_apply(product_code, payload):
                 (payload['gid'], product_id, application_id)
             )
         db.commit()
-    except Exception as e:
-        return jsonify({'error': f'신청 처리 실패: {str(e)}'}), 500
+    except Exception:
+        app.logger.exception('apply failed (gid=%s, product=%s)', payload['gid'], product_code)
+        return jsonify({'error': '신청 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.'}), 500
     finally:
         db.close()
 

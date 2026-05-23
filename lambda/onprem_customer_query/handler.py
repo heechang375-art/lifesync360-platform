@@ -229,6 +229,35 @@ def handler(event, context):
             # P4 r42 — Tokenization Service (FastAPI /health on port 8000)
             result = _api_get('/internal/health/tokenization')
 
+        elif action == 'raw_get':
+            result = _api_get(body['path'])
+        elif action == 'raw_post':
+            result = _api_post(body['path'], body.get('payload', {}))
+
+        elif action == 'direct_sql':
+            import pymysql
+            DB_HOST = body.get('host', os.environ.get('ONPREM_DB_HOST', '192.168.45.157'))
+            DB_PORT = int(body.get('port', os.environ.get('ONPREM_DB_PORT', '3306')))
+            DB_USER = body.get('user', os.environ.get('ONPREM_DB_USER', 'lifesync'))
+            DB_PASS = body.get('password', os.environ.get('ONPREM_DB_PASS', ''))
+            DB_NAME = body.get('db', 'lifesync_onprem')
+            sql     = body['sql']
+            params  = body.get('params')
+            conn = pymysql.connect(host=DB_HOST, port=DB_PORT, user=DB_USER,
+                                   password=DB_PASS, database=DB_NAME,
+                                   connect_timeout=10)
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(sql, params)
+                    if sql.strip().upper().startswith('SELECT'):
+                        rows = cur.fetchall()
+                        result = {'rows': rows, 'count': len(rows)}
+                    else:
+                        conn.commit()
+                        result = {'affected': cur.rowcount}
+            finally:
+                conn.close()
+
         else:
             return _resp(400, {'error': f'지원하지 않는 action: {action}'})
 

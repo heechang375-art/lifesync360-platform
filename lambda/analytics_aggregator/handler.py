@@ -16,7 +16,7 @@ EventBridge cron (03:00 KST) 또는 수동 invoke 로 실행.
 """
 import json
 import os
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 import boto3
 import pymysql

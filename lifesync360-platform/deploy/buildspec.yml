@@ -28,7 +28,7 @@ phases:
       - sed "s|<IMAGE1_NAME>|$ECR_URI:$IMAGE_TAG|" taskdef.json > /tmp/td.json
       - NEW_TD=$(aws ecs register-task-definition --cli-input-json file:///tmp/td.json --query 'taskDefinition.taskDefinitionArn' --output text --region $AWS_DEFAULT_REGION)
       - echo "Registered new TaskDef ARN $NEW_TD"
-      - aws ecs update-service --cluster $CLUSTER_NAME --service $SERVICE_NAME --task-definition $NEW_TD --force-new-deployment --region $AWS_DEFAULT_REGION
+      # update-service 는 Pipeline Deploy stage 가 단독 처리 (중복 deployment → rollback 방지)
       - printf '[{"name":"%s","imageUri":"%s:%s"}]' $CONTAINER_NAME $ECR_URI $IMAGE_TAG > imagedefinitions.json
       - |
         aws application-autoscaling register-scalable-target \

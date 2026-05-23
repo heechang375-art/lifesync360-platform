@@ -110,7 +110,7 @@ CGW(VPN 터미네이션) 설정에 `rightsubnet`이 있으면 서브넷 변경 �
 
 | 항목 | 상태 |
 |------|------|
-| lifesync360-platform — Mock 전체 기능 | ✅ |
+| lifesync360-platform — Mock 코드 전체 제거 (mock_data.py 삭제, USE_MOCK 분기 제거) | ✅ |
 | lifesync360-platform — Aurora/DynamoDB/Redis 연동 코드 | ✅ |
 | lifesync360-platform — 아키텍처 기준 컬럼명 전면 통일 | ✅ |
 | lifesync360-platform — 온프레미스 인증/동의 Lambda 연동 (_call_onprem) | ✅ |
@@ -853,6 +853,19 @@ ansible all -m ping \
 ---
 
 ## 플랫폼 / 어드민 개발 이력 (참고)
+
+### 2026-05-22
+
+**코드 클린업 + VPN 안정화**
+
+| 구분 | 변경 |
+|------|------|
+| mock 코드 전체 제거 | `mock_data.py` 삭제. `lifesync360-platform/app.py` 에서 모든 `USE_MOCK` 분기, `_recommendations_mock()`, `_mock_user` fallback 제거. `admin-platform/app.py` 에서 사용되지 않는 `import random` / `import threading` / `from collections import deque` 제거 |
+| 죽은 코드 제거 (platform app.py) | `import hashlib` (mock 비밀번호 검증용), `PROFILE_SYNC_LAMBDA` 환경변수 (`_resolve_global_id()` 삭제로 고아), `import uuid`, `COMPANIES` 리스트, `_resolve_global_id()` 함수 |
+| 버그 수정 | `api_consent()` NoneGuard — `request.get_json()` None 시 AttributeError 방지. `api_product_apply()` DB 에러 메시지 노출 → `app.logger.exception` + 제네릭 메시지로 교체 |
+| Lambda 클린업 | `analytics_aggregator/handler.py` — 미사용 `date` import 제거 |
+| VPN SA lifetime 설정 (ls-api) | `ikelifetime=7800s` / `lifetime=3300s` / `margintime=300s` 추가. 간헐적 끊김의 근본 원인(SA 만료 시점 재협상 없음) 해결. StrongSwan 재시작 후 ESTABLISHED 확인 |
+| 문서 중복 제거 | 루트 `NEW_TABLES_GUIDE.md` 삭제 (Service-DB/ 하위 파일과 100% 동일). `docs/iac-ecs-taskdef-spec.md` 에서 platform 태스크 정의의 `USE_MOCK` / `PROFILE_SYNC_LAMBDA` env 및 `customer-profile-sync` Lambda IAM 제거 |
 
 ### 2026-05-20
 

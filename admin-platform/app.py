@@ -1508,7 +1508,6 @@ def ai():
 
 
 # ── 신규 admin JSON API — analytics batch 결과 read ─────────────
-
 @app.route('/api/admin/recommend-trend')
 @login_required
 def api_admin_recommend_trend():
