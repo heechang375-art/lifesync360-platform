@@ -134,6 +134,10 @@ def get_db():
         cursorclass=pymysql.cursors.DictCursor,
     )
 
+class AuthError(Exception):
+    pass
+
+
 def _call_onprem(action, **kwargs):
     """온프레미스 조회 Lambda 호출 — Control Node 경유"""
     if not ONPREM_QUERY_LAMBDA:
@@ -146,6 +150,8 @@ def _call_onprem(action, **kwargs):
     result = _json.loads(resp['Payload'].read())
     status = result.get('statusCode', 200)
     body   = _json.loads(result['body']) if isinstance(result.get('body'), str) else result
+    if status == 401:
+        raise AuthError(body.get('error') or body.get('detail') or '인증 실패')
     if status not in (200,):
         raise ValueError(body.get('error') or body.get('detail') or '온프레미스 오류')
     return body
@@ -196,6 +202,8 @@ def api_login():
 
     try:
         result = _call_onprem('login', email=email, password=password)
+    except AuthError as e:
+        return jsonify({'error': str(e)}), 401
     except Exception as e:
         app.logger.error('login lambda 호출 실패: %s', e)
         return jsonify({'error': '인증 서비스에 연결할 수 없습니다.'}), 503
