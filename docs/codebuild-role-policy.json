@@ -7,7 +7,10 @@
                 "ssm:GetParameters",
                 "ssm:GetParameter"
             ],
-            "Resource": "arn:aws:ssm:ap-northeast-2:354493396671:parameter/lifesync360/*"
+            "Resource": [
+                "arn:aws:ssm:ap-northeast-2:354493396671:parameter/lifesync360/*",
+                "arn:aws:ssm:ap-northeast-2:354493396671:parameter/lifesync/*"
+            ]
         },
         {
             "Effect": "Allow",
