@@ -28,3 +28,8 @@ Aws_iac/
 # 스크린샷 (작업 증빙은 별도 보존)
 스크린샷*.png
 demo-access.md
+
+# 작업용 디버그/임시 파일 (root 한정 — tests/ 같은 정식 디렉토리는 영향 X)
+/test_*.py
+/tmp*.json
+/tmpout*
