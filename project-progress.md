@@ -2459,3 +2459,128 @@ Admin 플랫폼 4개 섹션 미표시 수정, DataVPC 상태 수정, lifesync360
 | DynamoDB `lifesync_customer_result` | 수동 삭제 (DeletionPolicy: Retain이었던 것) |
 | Lambda, ECR, CodeCommit | 스택 삭제로 함께 제거됨 |
 
+---
+
+## 세션 2026-05-23 — AI 차트 버그 수정 + 설계서 업데이트
+
+### 1. `_ai_age_perf_2step()` 완전 재작성
+
+**증상**: `/api/ai/chart/age` 0.3s 만에 빈 결과 반환.
+
+**원인 추적**:
+1차 → `_call_onprem('list_by_age_band')` 호출, `_ROUTES` 딕셔너리에 없어 즉시 `{}` 반환
+2차 → 온프레미스 API에 `list_by_age_band` 엔드포인트 자체 없음 (openapi.json 확인)
+3차 → Lambda 경로 막힘: `ONPREM_QUERY_LAMBDA` 환경변수 미설정
+4차 → DDB fallback: `analytics_segment_performance` 0행 → 빈 결과
+
+**수정**: `_ai_age_perf_2step()` 완전 재작성 (`admin-platform/app.py` 로컬 + EC2 양쪽 SSM base64 패치 적용)
+- OLD: `_call_onprem('list_by_age_band')`
+- NEW: 온프레미스 `/internal/profile/list-all?size=500&after=<cursor>` 직접 페이지네이션 (cursor: `next_after`, max 10 pages, timeout=2s/call)
+- 실패 시 DDB `analytics_segment_performance` `age_band#` fallback 유지
+
+### 2. 설계서 V5_3 업데이트
+
+`관리자_대시보드_설계서_V5_3.xlsx` AI 추천 시트 수정:
+- `카테고리별 도넛` 테이블/객체: `category_master` → `customer_recommend_history JOIN product_master JOIN category_master cat`
+- `연령대별 추천 성과` 데이터 소스: `On-Prem Lambda (1순위)` → `On-Prem /internal/profile/list-all 직접 HTTP (1순위)`
+- 페이지네이션 상세 (cursor, size, max pages, timeout) 반영
+- API 테이블 누락 4개 추가: `GET /api/ai/chart/{trend|donut|age|histogram}`
+
+### 3. 인프라/리소스 현황 파악
+
+| 리소스 | 상태 | 영향 |
+|--------|------|------|
+| Aurora `auroracluster-db-writer` | deleting (삭제 중) | kpi4 CTR/CVR, trend, donut, TOP10 모두 빈 결과 |
+| 온프레미스 VM | 종료됨 | 연령대별 차트 DDB fallback → 0행이라 빈 차트 |
+| DynamoDB `lifesync_customer_result` | 정상 (58,637 items) | histogram, 배치 고객 수 정상 |
+| `analytics_segment_performance` DDB | 0행 | age_band fallback 데이터 없음 |
+| `customer-profile-sync` Lambda | 미존재 (ResourceNotFoundException) | - |
+
+---
+
+## 세션 2026-05-24~25 — Audit + 폴더 분리 + 계정 전환 환경
+
+### 1. 코드/설계서 Audit (클라우드 미사용 상태에서)
+
+**검증 항목**:
+- admin-platform/app.py 변경분 (`_ai_age_perf_2step` 등)
+- mockup_data.py 죽은 코드 제거 확인 (7개 — 모두 미검출 ✅)
+- `/api/vm/management` 라우트 추가 (line 2237) ✅
+- terms.md 신규 4페이지 용어집 ✅
+- IaC 3종 (01-network admin subnet 10.4.20.0/24, 24-admin-windows-ec2 CidrIp 전환, 08-database SqlOps Condition) ✅
+- 설계서 V5_3 AI 시트 5개 항목 ✅
+
+**Audit에서 발견된 버그**:
+- `_ai_age_perf_2step()` line 2006 CVR 분모 불일치: `pur*100/clk` → 다른 곳은 모두 `pur*100/rec` (분모=recommended). 즉 연령대별 차트만 다른 의미의 CVR.
+
+### 2. CVR 공식 버그 수정
+
+`admin-platform/app.py:2006` CVR 공식을 다른 차트 + 설계서 + terms.md와 통일:
+- OLD: `'cvr': round(pur * 100.0 / clk, 1) if clk else 0`
+- NEW: `'cvr': round(pur * 100.0 / rec, 1) if rec else 0`
+
+→ CTR/CVR 모두 분모=recommended로 통일, 동일 base 비교 가능.
+
+### 3. IaC 변경/추가 정리 문서 작성
+
+`docs/iac-handoff-2026-05-24.md` 신규 — IaC 담당자 전달용:
+- 5개 modified 파일 (commit 후 배포 필요): 01b, 08, 08b, 19-cicd-service-platform, 21
+- 3개 untracked 신규 적용 필요: 01-network, 24-admin-windows-ec2, 27-onprem-simulator
+- 권한 이슈 IaC 미반영 5건 (수동 해결 → 재배포 시 깨짐):
+  - #10 ECS ExecutionRole `kms:Decrypt` (Condition: ViaService)
+  - #11 VPC KMS Interface Endpoint
+  - #22 OnpremSimRole `lambda:InvokeFunction`
+  - #24 OnpremSimRole DynamoDB Query/GetItem/Scan
+  - #26 Aurora/Redis SG 인바운드에 OnpremSim SG 미허용
+- 보안 audit: `admin123` 비밀번호 하드코딩 → Secrets Manager 분리 권장
+
+### 4. AI 추천 차트 raw count 표시 추가 (9 위치)
+
+시드 데이터 모수가 작아 % 만으로 의미 해석이 애매한 점 보완 — CTR/CVR 옆에 `(clicked/recommended)` 표기:
+
+| 파일 | 변경 |
+|------|------|
+| `app.py:_aurora_recommend_top10` | SQL `SUM(clicked)/SUM(purchased)` 추가 + return dict 확장 |
+| `app.py:_aurora_category_ctr_donut` | return dict에 `recommended`, `clicked` 추가 |
+| `app.py:api_ai_chart_age` (route) | age dict에 `recommended/clicked/purchased` 통과 |
+| `_chart_ai_age.j2` | `CTR X% (1/4) · CVR X% (0/4)` 형식 |
+| `_chart_ai_donut.j2` | legend에 `CTR X% (1/4)` 추가 |
+| `_chart_ai_trend.j2` | SVG에 막대 위 추천 건수 + 점 위/아래 CTR%/CVR% 라벨 |
+| `ai.html` (TOP10) | `CTR X% (1/4)` 형식 |
+| `ai.html` (도넛 legend) | 동일 |
+| `ai.html` (7일 추이 SVG 인라인) | _chart_ai_trend.j2와 동일 라벨 |
+
+### 5. 작업 환경 정리 (디스크 회복)
+
+| 단계 | 회복 |
+|------|------|
+| 잔여물 정리 (zip 14개 — `admin-platform-patch2.zip` 단일 43GB, `.venv`/`__pycache__`/`ssm_*.json`/`*.txt` dump/디버그 스크립트 등) | 42.99 GB |
+| outer `Aws_iac/` (옛 354 사본) + inner `Aws_iac/Aws_iac/aws/` + `awscliv2.zip` 정리 | 378 MB |
+| **합계** | **약 43.4 GB** (44.68 GB → 1.32 GB) |
+
+**outer `Aws_iac/` 안전 삭제 검증**:
+- outer-only 41개 모두 한글 인코딩 깨진 중복본 — inner에 정상본 존재
+- 핵심 yaml hash 비교: 01-network/24-admin-windows-ec2/data.env 모두 **inner가 더 최신** (2026-05-22)
+- outer는 옛 시점 사본 → 안전 삭제
+
+### 6. Desktop\ls-copy\ 작업 환경 분리
+
+원본 ls/는 354 계정 유지, Desktop 사본은 732 계정 기준으로 변환 → 계정 전환 시 시간 절약.
+
+- Desktop `ls-copy/` 생성: robocopy `/E /MT:8` 1.32 GB · 7,996 파일 · 5.8초
+- `.git` 2개 (`ls-copy/.git` + `ls-copy/Aws_iac/Aws_iac/.git`) 모두 보존
+- 16 파일 45건 치환:
+  - `354493396671` → `732264765472`
+  - `lifesync-354-` → `lifesync-732-`
+- 원본 ls/ 검증: 354 패턴 15+3 파일 그대로 보존 ✅
+
+### 7. Git 미Commit 상태
+
+- `admin-platform/app.py` 수정 (CVR fix + raw count 표시) — 미Commit
+- `admin-platform/templates/*.j2`, `ai.html` 수정 — 미Commit
+- `docs/iac-handoff-2026-05-24.md` 신규 — 미Commit
+- project-progress.md (이 섹션) — 미Commit
+- HANDOFF.md 업데이트 예정 — 미Commit
+- ls-copy/는 별도 환경, commit 대상 아님
+
+
