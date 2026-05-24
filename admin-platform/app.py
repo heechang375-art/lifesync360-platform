@@ -931,6 +931,8 @@ def _aurora_recommend_top10():
                 "SELECT p.product_name AS product, "
                 "       cat.category_name AS category, "
                 "       COUNT(*) AS recommended, "
+                "       SUM(r.clicked_flag IN ('Y','1')) AS clicked, "
+                "       SUM(r.purchased_flag IN ('Y','1')) AS purchased, "
                 "       ROUND(SUM(r.clicked_flag IN ('Y','1')) * 100.0 / COUNT(*), 1) AS ctr, "
                 "       ROUND(SUM(r.purchased_flag IN ('Y','1')) * 100.0 / COUNT(*), 1) AS cvr "
                 "FROM customer_recommend_history r "
@@ -947,6 +949,8 @@ def _aurora_recommend_top10():
                 'product':     r['product'],
                 'category':    r['category'],
                 'recommended': int(r.get('recommended') or 0),
+                'clicked':     int(r.get('clicked') or 0),
+                'purchased':   int(r.get('purchased') or 0),
                 'ctr':         float(r.get('ctr') or 0),
                 'cvr':         float(r.get('cvr') or 0),
             }
@@ -1940,6 +1944,8 @@ def _aurora_category_ctr_donut():
                 'name': r['label'],
                 'pct': round(int(r['recommended'] or 0) * 100.0 / total, 1) if total > 0 else 0,
                 'ctr': float(r['ctr'] or 0),
+                'recommended': int(r['recommended'] or 0),
+                'clicked':     int(r['clicked'] or 0),
                 'color': _colors[i % len(_colors)],
             }
             for i, r in enumerate(rows)
@@ -2003,7 +2009,7 @@ def _ai_age_perf_2step():
                 out.append({
                     'age_band': age_band, 'recommended': rec, 'clicked': clk, 'purchased': pur,
                     'ctr': round(clk * 100.0 / rec, 1) if rec else 0,
-                    'cvr': round(pur * 100.0 / clk, 1) if clk else 0,
+                    'cvr': round(pur * 100.0 / rec, 1) if rec else 0,
                 })
         return out
     except Exception:
@@ -2057,7 +2063,14 @@ def _ddb_feature_importance():
 def api_ai_chart_age():
     """연령대별 추천 성과 진행바."""
     raw = _ai_age_perf_2step()
-    age = [{'age': r.get('age_band', '-'), 'ctr': r.get('ctr', 0), 'cvr': r.get('cvr', 0)} for r in raw]
+    age = [{
+        'age':         r.get('age_band', '-'),
+        'recommended': int(r.get('recommended') or 0),
+        'clicked':     int(r.get('clicked') or 0),
+        'purchased':   int(r.get('purchased') or 0),
+        'ctr':         r.get('ctr', 0),
+        'cvr':         r.get('cvr', 0),
+    } for r in raw]
     return render_template('_chart_ai_age.j2', age_perf=age)
 
 

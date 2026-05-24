@@ -43,6 +43,7 @@
                 {% set x = 50 + loop.index0 * (bw + gap) %}
                 {% set h = (d.recommended / max_r * 150) | round(0, 'floor') | int %}
                 <rect x="{{ x }}" y="{{ 195 - h }}" width="{{ bw }}" height="{{ h }}" fill="#dbeafe" rx="3"/>
+                <text x="{{ x + bw / 2 }}" y="{{ 190 - h }}" text-anchor="middle" font-size="10" fill="#64748b" font-weight="600">{{ d.recommended }}</text>
                 <text x="{{ x + bw / 2 }}" y="213" text-anchor="middle" font-size="10" fill="#94a3b8">{{ d.date }}</text>
                 {% endfor %}
                 <!-- 선 (CTR) -->
@@ -51,10 +52,15 @@
                 <!-- 선 (CVR) -->
                 <polyline fill="none" stroke="#f59e0b" stroke-width="2"
                     points="{% for d in trend_7d %}{{ 50 + loop.index0 * (bw + gap) + bw/2 }},{{ [195 - (d.cvr / max_cvr * 150) | round(0,'floor') | int, 15] | max }} {% endfor %}"/>
-                <!-- 도트 -->
+                <!-- 도트 + % 라벨 -->
                 {% for d in trend_7d %}
-                <circle cx="{{ 50 + loop.index0 * (bw + gap) + bw/2 }}" cy="{{ [195 - (d.ctr / max_ctr * 150) | round(0,'floor') | int, 15] | max }}" r="3" fill="#3b82f6"/>
-                <circle cx="{{ 50 + loop.index0 * (bw + gap) + bw/2 }}" cy="{{ [195 - (d.cvr / max_cvr * 150) | round(0,'floor') | int, 15] | max }}" r="3" fill="#f59e0b"/>
+                {% set cx = 50 + loop.index0 * (bw + gap) + bw/2 %}
+                {% set ctr_y = [195 - (d.ctr / max_ctr * 150) | round(0,'floor') | int, 15] | max %}
+                {% set cvr_y = [195 - (d.cvr / max_cvr * 150) | round(0,'floor') | int, 15] | max %}
+                <circle cx="{{ cx }}" cy="{{ ctr_y }}" r="3" fill="#3b82f6"/>
+                <circle cx="{{ cx }}" cy="{{ cvr_y }}" r="3" fill="#f59e0b"/>
+                <text x="{{ cx }}" y="{{ ctr_y - 6 }}" text-anchor="middle" font-size="9" fill="#3b82f6" font-weight="600">{{ d.ctr }}%</text>
+                <text x="{{ cx }}" y="{{ cvr_y + 14 }}" text-anchor="middle" font-size="9" fill="#f59e0b" font-weight="600">{{ d.cvr }}%</text>
                 {% endfor %}
             </svg>
             {% else %}
@@ -75,7 +81,7 @@
                 <div class="topn-rank">{{ p.rank }}</div>
                 <div class="topn-name" style="font-size:12px;">{{ p.product }}</div>
                 <div style="font-size:11px; color:#94a3b8; margin-right:6px;">{{ '{:,}'.format(p.recommended) }}</div>
-                <div class="topn-score" style="font-size:11px;">{{ p.ctr }}%</div>
+                <div class="topn-score" style="font-size:11px;">CTR {{ p.ctr }}% ({{ p.clicked }}/{{ p.recommended }})</div>
             </div>
             {% endfor %}
         </div>
@@ -112,7 +118,7 @@
                         <span class="dot" style="background: {{ c.color }};"></span>
                         <span class="name">{{ c.name }}</span>
                         <span class="pct">{{ c.pct }}%</span>
-                        <span style="font-size:10px; color:#94a3b8; margin-left:4px;">클릭률 {{ c.ctr }}%</span>
+                        <span style="font-size:10px; color:#94a3b8; margin-left:4px;">CTR {{ c.ctr }}% ({{ c.clicked }}/{{ c.recommended }})</span>
                     </div>
                     {% endfor %}
                 </div>

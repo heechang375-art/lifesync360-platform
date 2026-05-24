@@ -13,6 +13,7 @@
     {% set x = 50 + loop.index0 * (bw + gap) %}
     {% set h = (d.recommended / max_r * 150) | round(0, 'floor') | int %}
     <rect x="{{ x }}" y="{{ 195 - h }}" width="{{ bw }}" height="{{ h }}" fill="#dbeafe" rx="3"/>
+    <text x="{{ x + bw / 2 }}" y="{{ 190 - h }}" text-anchor="middle" font-size="10" fill="#64748b" font-weight="600">{{ d.recommended }}</text>
     <text x="{{ x + bw / 2 }}" y="213" text-anchor="middle" font-size="10" fill="#94a3b8">{{ d.date }}</text>
     {% endfor %}
     <polyline fill="none" stroke="#3b82f6" stroke-width="2"
@@ -20,8 +21,13 @@
     <polyline fill="none" stroke="#f59e0b" stroke-width="2"
         points="{% for d in trend_7d %}{{ 50 + loop.index0 * (bw + gap) + bw/2 }},{{ [195 - (d.cvr / max_cvr * 150) | round(0,'floor') | int, 15] | max }} {% endfor %}"/>
     {% for d in trend_7d %}
-    <circle cx="{{ 50 + loop.index0 * (bw + gap) + bw/2 }}" cy="{{ [195 - (d.ctr / max_ctr * 150) | round(0,'floor') | int, 15] | max }}" r="3" fill="#3b82f6"/>
-    <circle cx="{{ 50 + loop.index0 * (bw + gap) + bw/2 }}" cy="{{ [195 - (d.cvr / max_cvr * 150) | round(0,'floor') | int, 15] | max }}" r="3" fill="#f59e0b"/>
+    {% set cx = 50 + loop.index0 * (bw + gap) + bw/2 %}
+    {% set ctr_y = [195 - (d.ctr / max_ctr * 150) | round(0,'floor') | int, 15] | max %}
+    {% set cvr_y = [195 - (d.cvr / max_cvr * 150) | round(0,'floor') | int, 15] | max %}
+    <circle cx="{{ cx }}" cy="{{ ctr_y }}" r="3" fill="#3b82f6"/>
+    <circle cx="{{ cx }}" cy="{{ cvr_y }}" r="3" fill="#f59e0b"/>
+    <text x="{{ cx }}" y="{{ ctr_y - 6 }}" text-anchor="middle" font-size="9" fill="#3b82f6" font-weight="600">{{ d.ctr }}%</text>
+    <text x="{{ cx }}" y="{{ cvr_y + 14 }}" text-anchor="middle" font-size="9" fill="#f59e0b" font-weight="600">{{ d.cvr }}%</text>
     {% endfor %}
 </svg>
 <div style="display:flex; gap:14px; justify-content:center; font-size:11px; color:#64748b; margin-top:4px;">
