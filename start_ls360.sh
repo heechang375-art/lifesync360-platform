@@ -1,12 +1,15 @@
 #!/bin/bash
 set -e
 
-# Secrets에서 DB + Redis 정보 로드
+# Secrets에서 DB 자격 로드 (master secret JSON keys: host/username/password)
 SECRET=$(aws secretsmanager get-secret-value --secret-id /lifesync/dev/db/master --region ap-northeast-2 --query SecretString --output text)
-export AURORA_HOST=$(echo $SECRET | python3 -c "import sys,json;print(json.load(sys.stdin).get('AURORA_HOST',''))")
-export DB_USER=$(echo $SECRET | python3 -c "import sys,json;print(json.load(sys.stdin).get('DB_USER',''))")
-export DB_PASS=$(echo $SECRET | python3 -c "import sys,json;print(json.load(sys.stdin).get('DB_PASS',''))")
-export REDIS_HOST=$(echo $SECRET | python3 -c "import sys,json;print(json.load(sys.stdin).get('REDIS_HOST',''))")
+export AURORA_HOST=$(echo $SECRET | python3 -c "import sys,json;print(json.load(sys.stdin)['host'])")
+export DB_USER=$(echo $SECRET | python3 -c "import sys,json;print(json.load(sys.stdin)['username'])")
+export DB_PASS=$(echo $SECRET | python3 -c "import sys,json;print(json.load(sys.stdin)['password'])")
+
+# Redis endpoint 별도 secret (lifesync/dev/redis JSON keys: host/port)
+REDIS_SECRET=$(aws secretsmanager get-secret-value --secret-id lifesync/dev/redis --region ap-northeast-2 --query SecretString --output text)
+export REDIS_HOST=$(echo $REDIS_SECRET | python3 -c "import sys,json;print(json.load(sys.stdin)['host'])")
 export DB_NAME="lifesync360"
 export REDIS_PORT="6379"
 JWT_SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id ecs-jwt-signing --region ap-northeast-2 --query SecretString --output text)
