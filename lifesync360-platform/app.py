@@ -108,22 +108,61 @@ GRADE_BENEFITS = {
 
 # ── 상품 옵션 라벨 매핑 (product_option.option_name -> 한글) ───
 OPTION_LABEL = {
-    'coverage_period':     '보장기간',
-    'simple_underwriting': '간편심사',
-    'mobile_join':         '모바일가입',
-    'monthly_premium':     '월보험료',
-    'insurance_amount':    '보장금액',
-    'contract_period':     '계약기간',
-    'payment_period':      '납입기간',
-    'payment_method':      '납입방법',
-    'age_limit':           '가입연령',
-    'renewal':             '갱신여부',
-    'interest_rate':       '금리',
-    'min_amount':          '최소가입금액',
-    'max_amount':          '최대가입금액',
-    'benefit_type':        '보장유형',
-    'tax_benefit':         '세제혜택',
+    'advisor_type':           '자문유형',
+    'ai_report':              'AI 리포트 제공 여부',
+    'annual_fee':             '연회비',
+    'asset_type':             '자산유형',
+    'auto_transfer_required': '자동이체 필요 여부',
+    'benefit_category':       '혜택 카테고리',
+    'cashback_rate':          '캐시백률',
+    'checkup_type':           '검진유형',
+    'coaching_cycle':         '코칭 주기',
+    'consulting_type':        '상담유형',
+    'coverage_amount':        '보장금액',
+    'coverage_period':        '보장기간',
+    'coverage_type':          '보장유형',
+    'credit_score_required':  '필요 신용점수',
+    'discount_rate':          '할인율',
+    'expected_return':        '예상수익률',
+    'fund_type':              '펀드유형',
+    'health_sync':            '건강 데이터 연동',
+    'interest_rate':          '금리',
+    'investment_region':      '투자지역',
+    'join_age_range':         '가입연령',
+    'loan_limit':             '대출한도',
+    'loan_rate':              '대출금리',
+    'main_benefit':           '주요 혜택',
+    'mileage_rate':           '마일리지 적립률',
+    'min_deposit_amount':     '최소 가입금액',
+    'mobile_join':            '모바일 가입 가능',
+    'monthly_limit':          '월 납입한도',
+    'monthly_premium':        '월 납입금',
+    'pension_start_age':      '연금개시연령',
+    'point_brand':            '제휴 브랜드',
+    'point_rate':             '포인트 적립률',
+    'preferential_condition': '우대조건',
+    'repayment_type':         '상환방식',
+    'reservation_required':   '예약 필요 여부',
+    'reward_point':           '건강 리워드 포인트',
+    'risk_grade':             '투자위험등급',
+    'service_channel':        '서비스 채널',
+    'simple_underwriting':    '간편심사 여부',
+    'tax_benefit':            '세제혜택',
+    'term_month':             '가입기간',
+    'volatility':             '변동성',
+    'wearable_sync':          '웨어러블 연동',
 }
+
+OPTION_LABEL_BY_CATEGORY = {
+    'interest_rate':   {'DEPOSIT': '예금 금리', 'SAVING': '적금 금리'},
+    'monthly_premium': {'INSURANCE': '월 보험료', 'DIRECT_INS': '월 보험료'},
+}
+
+def _option_label(option_name, category_code=None):
+    cm = OPTION_LABEL_BY_CATEGORY.get(option_name)
+    if cm and category_code in cm:
+        return cm[category_code]
+    return OPTION_LABEL.get(option_name, option_name)
 
 def _format_option_value(v):
     s = str(v).strip()
@@ -836,7 +875,7 @@ def product(product_code):
         'type':     row['target_grade'],
         'desc':     row['description'],
         'tag':      row['risk_level'],
-        'detail':   [{'key': OPTION_LABEL.get(o['option_name'], o['option_name']),
+        'detail':   [{'key': _option_label(o['option_name'], row['category_code']),
                       'value': _format_option_value(o['option_value'])} for o in options],
         'category': row['company_code'],
     }
