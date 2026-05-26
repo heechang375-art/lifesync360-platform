@@ -106,6 +106,37 @@ GRADE_BENEFITS = {
 }
 
 
+# ── 상품 옵션 라벨 매핑 (product_option.option_name -> 한글) ───
+OPTION_LABEL = {
+    'coverage_period':     '보장기간',
+    'simple_underwriting': '간편심사',
+    'mobile_join':         '모바일가입',
+    'monthly_premium':     '월보험료',
+    'insurance_amount':    '보장금액',
+    'contract_period':     '계약기간',
+    'payment_period':      '납입기간',
+    'payment_method':      '납입방법',
+    'age_limit':           '가입연령',
+    'renewal':             '갱신여부',
+    'interest_rate':       '금리',
+    'min_amount':          '최소가입금액',
+    'max_amount':          '최대가입금액',
+    'benefit_type':        '보장유형',
+    'tax_benefit':         '세제혜택',
+}
+
+def _format_option_value(v):
+    s = str(v).strip()
+    if s == 'Y': return '예'
+    if s == 'N': return '아니오'
+    if s.endswith(' KRW'):
+        try:
+            return f"{int(s[:-4].strip()):,}원"
+        except ValueError:
+            pass
+    return s
+
+
 # ── DB / 인프라 헬퍼 ──────────────────────────────────
 _redis  = None
 _dynamo = None
@@ -805,7 +836,8 @@ def product(product_code):
         'type':     row['target_grade'],
         'desc':     row['description'],
         'tag':      row['risk_level'],
-        'detail':   [{'key': o['option_name'], 'value': o['option_value']} for o in options],
+        'detail':   [{'key': OPTION_LABEL.get(o['option_name'], o['option_name']),
+                      'value': _format_option_value(o['option_value'])} for o in options],
         'category': row['company_code'],
     }
     return render_template('product.html', item=item)
