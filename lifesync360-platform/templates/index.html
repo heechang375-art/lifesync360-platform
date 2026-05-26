@@ -52,12 +52,6 @@
 
         <!-- ── MY 탭 ── -->
         <section id="tab-my" class="tab-content">
-            <!-- Next Best Action 카드 (DynamoDB next_best_action) -->
-            <div id="nba-section" style="display:none; margin: 16px; padding: 16px; border-radius: 12px; background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); color: white;">
-                <div style="font-size: 12px; opacity: 0.9; margin-bottom: 6px;">🎯 AI 추천 다음 액션</div>
-                <div id="nba-text" style="font-size: 16px; font-weight: 600;">-</div>
-            </div>
-
             <!-- 신청 내역 (customer_product_application JOIN product/company/category) -->
             <div style="margin: 16px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
@@ -141,10 +135,6 @@
                     document.getElementById('score-arc').style.setProperty('--score', active.dataset.score);
                 }
                 if (scores.breakdown) _breakdown = scores.breakdown;
-                if (scores.next_best_action) {
-                    document.getElementById('nba-text').textContent = scores.next_best_action;
-                    document.getElementById('nba-section').style.display = '';
-                }
             }
         }
 
@@ -152,12 +142,6 @@
             const data = await recRes.json();
             const products = Array.isArray(data) ? data : (data.products || []);
             const meta     = (data && !Array.isArray(data)) ? (data.meta || {}) : {};
-
-            const nbaEl = document.getElementById('nba-text');
-            if (meta.next_best_action && nbaEl && nbaEl.textContent === '-') {
-                nbaEl.textContent = meta.next_best_action;
-                document.getElementById('nba-section').style.display = '';
-            }
 
             const homeContainer = document.getElementById('home-rec-cats');
             homeContainer.innerHTML = '';
@@ -170,7 +154,7 @@
                     <div style="display:flex;justify-content:space-between;align-items:flex-end;padding:0 4px 10px;">
                         <div>
                             <div style="font-size:15px;font-weight:700;color:#0f172a;">🎁 나를 위한 맞춤 추천</div>
-                            <div style="font-size:12px;color:#94a3b8;margin-top:2px;">recommend_rule + cross_sell + NBA 매칭 · ${products.length}건</div>
+                            <div style="font-size:12px;color:#94a3b8;margin-top:2px;">recommend_rule + cross_sell 매칭 · ${products.length}건</div>
                         </div>
                     </div>
                     <div style="display:flex;flex-direction:column;gap:10px;">
