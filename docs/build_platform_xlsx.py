@@ -2,7 +2,8 @@
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
-OUT = 'C:/users/campus3S026/LS/lifesync360-platform 설계서 V3.xlsx'
+import os as _os
+OUT = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '..', 'lifesync360-platform 설계서 V3.xlsx')
 
 # ── admin V4 스타일 상수 ──────────────────────────────────────────
 FONT       = Font(name='맑은 고딕', size=12)
@@ -33,14 +34,14 @@ SHEETS = {
              '5 등급 × 1 명 — VIP / GOLD / SILVER / BASIC / CARE (예: user0000924@lifesync.com · DemoVIP01!). 비밀번호는 SHA-256 해시 비교'),
             ('토큰 발급 방식',
              '로그인 검증 통과 시 플랫폼이 secret 으로 HS256 토큰 직접 발급. 응답 본문에 token 반환',
-             'AWS Systems Manager (Parameter Store)',
-             '/lifesync360/jwt-secret (SecureString)',
+             'AWS Secrets Manager',
+             'ecs-jwt-signing · jwt key',
              'jwt.encode({sub, gid, exp}, secret, HS256) — secret 은 발급/검증 양쪽에 동일'),
             ('토큰 검증 시크릿',
              '클라이언트가 들고 오는 토큰을 같은 secret 으로 검증 (HS256 대칭키)',
-             'AWS Systems Manager (Parameter Store)',
-             '/lifesync360/jwt-secret (SecureString)',
-             '첫 호출 1회만 SSM 조회 후 메모리 캐시. ECS 배포 시 환경변수로 자동 주입'),
+             'AWS Secrets Manager',
+             'ecs-jwt-signing · jwt key',
+             '첫 호출 1회만 Secrets Manager 조회 후 메모리 캐시. ECS 배포 시 환경변수로 자동 주입'),
         ]),
         ('본인 프로필 조회 (2번 영역 : 헤더 / 마이페이지)', [
             ('이름 · 등급',
@@ -120,10 +121,10 @@ SHEETS = {
     '추천 · 상품': [
         ('추천 리스트 — Aurora top 10 (1번 영역 : 추천 탭)', [
             ('① 점수 · 등급 조회',
-             '추천 정렬에 필요한 본인 점수·등급·NBA 가져오기',
+             '추천 정렬에 필요한 본인 점수·등급 가져오기',
              'DynamoDB',
              'lifesync_customer_result',
-             '등급·종합점수·건강점수·VIP 확률·다음 행동(NBA, 내부 사용)'),
+             '등급·종합점수·건강점수·VIP 확률'),
             ('② 캐시 확인',
              '6시간 이내 추천 결과가 있으면 그대로 재사용',
              'AWS ElastiCache (Redis)',
@@ -133,7 +134,7 @@ SHEETS = {
              '등급·점수·건강조건에 맞는 추천 룰 찾기',
              'Aurora MySQL',
              'recommend_rule',
-             'NBA 매칭되는 룰을 최상단으로 정렬 (내부 가중치)'),
+             '등급·점수·건강조건 기준으로 우선순위 정렬'),
             ('④ 교차 추천 보강',
              '주 카테고리와 어울리는 다른 카테고리 3개 추가',
              'Aurora MySQL',
@@ -249,9 +250,9 @@ SHEETS = {
         ('환경 변수 (1번 영역 : ECS 컨테이너 설정)', [
             ('인증',
              'HS256 토큰 발급·검증 시크릿 (대칭키)',
-             'AWS Systems Manager',
-             '/lifesync360/jwt-secret',
-             'SecureString — ECS task secrets 로 자동 주입'),
+             'AWS Secrets Manager',
+             'ecs-jwt-signing',
+             'JSON 의 jwt key — ECS task secrets 로 자동 주입'),
             ('Service-DB 연결',
              'Aurora MySQL 호스트·계정·비밀번호·DB명',
              'AWS Secrets Manager / SSM',
@@ -263,7 +264,7 @@ SHEETS = {
              'rec:{global_id}',
              'VPC 보안그룹으로 통신 — 외부 노출 X'),
             ('DynamoDB',
-             '점수·등급·NBA 등 ML 산출물 저장 테이블',
+             '점수·등급 등 ML 산출물 저장 테이블',
              'AWS DynamoDB',
              'lifesync_customer_result',
              '매일 새벽 GCP Vertex AI ETL 로 적재됨'),
@@ -308,7 +309,7 @@ API_SECTIONS = {
          '계정 검증 통과 시 HS256 토큰 발급 후 응답에 반환',
          'app.py · api_login()',
          'POST /api/login',
-         '입력: 이메일·비밀번호 / 검증: test_login_credentials.csv (5 등급 데모) / 토큰 발급: jwt.encode + SSM /lifesync360/jwt-secret'),
+         '입력: 이메일·비밀번호 / 검증: test_login_credentials.csv (5 등급 데모) / 토큰 발급: jwt.encode + Secrets Manager ecs-jwt-signing'),
         ('/api/me',
          '본인 정보 조회 (이름·등급·인구통계·동의)',
          'app.py · api_me() — @require_jwt',
