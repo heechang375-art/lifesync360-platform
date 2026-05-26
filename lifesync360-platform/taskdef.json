@@ -20,7 +20,7 @@
         { "name": "AWS_REGION",          "value": "ap-northeast-2" },
         { "name": "DB_NAME",             "value": "lifesync360" },
         { "name": "DYNAMO_TABLE",        "value": "lifesync_customer_result" },
-        { "name": "REDIS_HOST",          "value": "lif-re-159z02paucc59.lkjrak.0001.apn2.cache.amazonaws.com" },
+        { "name": "REDIS_HOST",          "value": "lif-re-viqx38lwzx6o.lkjrak.0001.apn2.cache.amazonaws.com" },
         { "name": "REDIS_PORT",          "value": "6379" },
         { "name": "USE_MOCK",            "value": "false" },
         { "name": "PROFILE_SYNC_LAMBDA", "value": "customer-profile-sync" },
