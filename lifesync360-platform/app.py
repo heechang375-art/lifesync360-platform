@@ -668,7 +668,7 @@ def _enrich_and_record(cur, products, global_id, grade, dynamic_score, health_sc
         action = rule_action_by_cat.get(p.get('category_code'), 'RECOMMEND_DASHBOARD')
         reason_parts = []
         if target_action and action == target_action:
-            reason_parts.append(f'NBA "{nba}" 매칭')
+            reason_parts.append('AI 추천 매칭')
         reason_parts.append(f'{grade} 등급')
         if action == 'RECOMMEND_CROSS_SELL':
             reason_parts.append('cross_sell 보강')
