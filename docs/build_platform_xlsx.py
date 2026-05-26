@@ -21,17 +21,17 @@ HEADERS_API = ['API', '설명', '구현 위치', '엔드포인트', '데이터 �
 # ── 일반 섹션 (시트별) ────────────────────────────────────────────
 SHEETS = {
     '인증 · 로그인': [
-        ('로그인 · 토큰 발급 (1번 영역 : 시연 진입)', [
+        ('로그인 · 토큰 발급 (1번 영역)', [
             ('로그인 화면',
              '이메일·비밀번호를 입력받아 백엔드에 로그인 요청',
              '프론트엔드 SSR',
              'templates/login.html',
              '비밀번호 입력 → 로그인 버튼 → /api/login 호출'),
             ('계정 검증',
-             '입력한 이메일·비밀번호가 5 등급 데모 계정과 일치하는지 확인',
-             'test_login_credentials.csv (시연용 사전 발급 계정)',
-             'login_email + sha256_hex',
-             '5 등급 × 1 명 — VIP / GOLD / SILVER / BASIC / CARE (예: user0000924@lifesync.com · DemoVIP01!). 비밀번호는 SHA-256 해시 비교'),
+             '입력한 이메일·비밀번호를 온프레미스 사용자 DB 에서 조회/검증',
+             '온프레미스 MySQL (Lambda 경유)',
+             'lifesync_onprem.users (Lambda action=login)',
+             'app.py → lifesync-onprem-customer-query Lambda → Private API → ls-db MySQL. 비밀번호는 SHA-256 해시 비교'),
             ('토큰 발급 방식',
              '로그인 검증 통과 시 플랫폼이 secret 으로 HS256 토큰 직접 발급. 응답 본문에 token 반환',
              'AWS Secrets Manager',
@@ -309,7 +309,7 @@ API_SECTIONS = {
          '계정 검증 통과 시 HS256 토큰 발급 후 응답에 반환',
          'app.py · api_login()',
          'POST /api/login',
-         '입력: 이메일·비밀번호 / 검증: test_login_credentials.csv (5 등급 데모) / 토큰 발급: jwt.encode + Secrets Manager ecs-jwt-signing'),
+         '입력: 이메일·비밀번호 / 검증: 온프레미스 MySQL (Lambda 경유) / 토큰 발급: jwt.encode + Secrets Manager ecs-jwt-signing'),
         ('/api/me',
          '본인 정보 조회 (이름·등급·인구통계·동의)',
          'app.py · api_me() — @require_jwt',
