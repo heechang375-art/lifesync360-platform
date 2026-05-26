@@ -2,50 +2,117 @@
     "Version": "2012-10-17",
     "Statement": [
         {
+            "Action": [
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents"
+            ],
+            "Resource": [
+                "arn:aws:logs:ap-northeast-2:354493396671:log-group:/aws/codebuild/*",
+                "arn:aws:logs:ap-northeast-2:354493396671:log-group:/aws/codebuild/*:log-stream:*"
+            ],
             "Effect": "Allow",
+            "Sid": "CodeBuildLogs"
+        },
+        {
+            "Action": [
+                "ecr:GetAuthorizationToken"
+            ],
+            "Resource": "*",
+            "Effect": "Allow",
+            "Sid": "EcrPushScoped"
+        },
+        {
+            "Action": [
+                "ecr:BatchCheckLayerAvailability",
+                "ecr:CompleteLayerUpload",
+                "ecr:GetDownloadUrlForLayer",
+                "ecr:InitiateLayerUpload",
+                "ecr:PutImage",
+                "ecr:UploadLayerPart",
+                "ecr:BatchGetImage",
+                "ecr:DescribeRepositories"
+            ],
+            "Resource": [
+                "arn:aws:ecr:ap-northeast-2:354493396671:repository/lifesync-dev-lifesync-service"
+            ],
+            "Effect": "Allow",
+            "Sid": "EcrReposScoped"
+        },
+        {
+            "Action": [
+                "ecs:DescribeServices",
+                "ecs:DescribeTaskDefinition",
+                "ecs:RegisterTaskDefinition",
+                "ecs:UpdateService"
+            ],
+            "Resource": "*",
+            "Effect": "Allow",
+            "Sid": "EcsServiceUpdate"
+        },
+        {
+            "Condition": {
+                "StringLike": {
+                    "iam:PassedToService": "ecs-tasks.amazonaws.com"
+                }
+            },
+            "Action": [
+                "iam:PassRole"
+            ],
+            "Resource": "*",
+            "Effect": "Allow",
+            "Sid": "PassEcsRoles"
+        },
+        {
             "Action": [
                 "ssm:GetParameters",
                 "ssm:GetParameter"
             ],
             "Resource": [
-                "arn:aws:ssm:ap-northeast-2:354493396671:parameter/lifesync360/*",
-                "arn:aws:ssm:ap-northeast-2:354493396671:parameter/lifesync/*"
-            ]
+                "arn:aws:ssm:ap-northeast-2:354493396671:parameter/lifesync/*",
+                "arn:aws:ssm:ap-northeast-2:354493396671:parameter/lifesync360/*"
+            ],
+            "Effect": "Allow",
+            "Sid": "SsmLifesyncParams"
         },
         {
-            "Effect": "Allow",
             "Action": [
                 "application-autoscaling:RegisterScalableTarget",
                 "application-autoscaling:PutScalingPolicy",
                 "application-autoscaling:DescribeScalingPolicies",
                 "cloudwatch:PutMetricAlarm"
             ],
-            "Resource": "*"
-        },
-        {
-            "Effect": "Allow",
-            "Action": "iam:CreateServiceLinkedRole",
-            "Resource": "arn:aws:iam::354493396671:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/*"
-        },
-        {
-            "Effect": "Allow",
-            "Action": [
-                "ecs:RegisterTaskDefinition",
-                "ecs:DescribeTaskDefinition",
-                "ecs:UpdateService",
-                "ecs:DescribeServices"
-            ],
-            "Resource": "*"
-        },
-        {
-            "Effect": "Allow",
-            "Action": "iam:PassRole",
             "Resource": "*",
-            "Condition": {
-                "StringEquals": {
-                    "iam:PassedToService": "ecs-tasks.amazonaws.com"
-                }
-            }
+            "Effect": "Allow",
+            "Sid": "AppAutoscalingAndAlarms"
+        },
+        {
+            "Action": [
+                "s3:GetObject",
+                "s3:PutObject",
+                "s3:GetObjectVersion",
+                "s3:PutObjectAcl",
+                "s3:AbortMultipartUpload",
+                "s3:DeleteObject"
+            ],
+            "Resource": [
+                "arn:aws:s3:::lifesync-artifact-bucket/*",
+                "arn:aws:s3:::lifesync-script-bucket/*"
+            ],
+            "Effect": "Allow",
+            "Sid": "CodeBuildS3Objects"
+        },
+        {
+            "Action": [
+                "s3:ListBucket",
+                "s3:GetBucketLocation"
+            ],
+            "Resource": [
+                "arn:aws:s3:::lifesync-artifact-bucket",
+                "arn:aws:s3:::lifesync-script-bucket"
+            ],
+            "Effect": "Allow",
+            "Sid": "CodeBuildS3ListBuckets"
         }
     ]
 }
