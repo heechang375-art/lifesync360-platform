@@ -593,7 +593,7 @@ def _match_rules(cur, grade, dynamic_score, health_score, vip_required_flag, tar
 def _fetch_products(cur, cached_ids, cat_list, dynamic_score, grade, consented_domains=None):
     """3 모드: cache hit → id 조회 / category 매칭 → top2*N / fallback → score 기반 LIMIT 20.
     consented_domains: None → 필터 미적용 / list → AND c.company_code IN (...) 추가.
-    (cache hit 분기는 그대로 — 캐시는 이미 동의 필터링된 결과 가정, TTL 6h 안에서만 stale)"""
+    (cache hit 분기도 consent 필터 적용 — batch 가 stale cache 채우는 케이스 방어)"""
     consent_where = ""
     consent_params = []
     if consented_domains is not None:
@@ -613,8 +613,9 @@ def _fetch_products(cur, cached_ids, cat_list, dynamic_score, grade, consented_d
             JOIN company_master   c   ON p.company_id  = c.company_id
             JOIN category_master  cat ON p.category_id = cat.category_id
             WHERE p.product_id IN ({placeholders}) AND p.active_flag = 'Y'
+                  {consent_where}
             ORDER BY p.priority_rank
-        """, cached_ids)
+        """, list(cached_ids) + consent_params)
         return cur.fetchall()
 
     products = []
