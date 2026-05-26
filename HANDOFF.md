@@ -1,4 +1,4 @@
-# 인수인계 — 2026-05-25 세션 종료 시점
+# 인수인계 — 2026-05-26 세션 종료 시점
 
 새 세션 시작 시 이 파일 먼저 읽고 시작할 것.
 
@@ -8,12 +8,100 @@
 
 ```
 branch: main
-최신 커밋: 94f4523  merge: origin/main 병합 (원격 12개 커밋 통합)
+최신 커밋: d43027d  docs(platform): 설계서 V3 xlsx 재생성 (전체 시트 반영본)
 ```
 
-2026-05-22~25 세션 변경사항(IaC 템플릿, admin-platform 코드, 설계서, docs/iac-handoff-2026-05-24.md, 보완 가이드 등)은 로컬 수정 상태 — 아직 커밋 안 됨.
+2026-05-26 이번 세션 platform 서비스 관련 14개 commit (0015bd7 ~ d43027d) 모두 origin/main 푸시 완료. CI/CD 자동 트리거 (이번 PRIMARY rev=151, image ef99e6e6).
 
-EC2(`i-0784a4837383967bf`) 실행 중인 `C:\admin-platform\app.py`에는 SSM base64 방식으로 패치 직접 적용됨 — 단, 2026-05-24 CVR fix와 raw count 표시는 EC2 미적용 (클라우드 작업 불가 상태).
+이전 세션 (2026-05-22~25) admin-platform 관련 로컬 변경 / EC2 SSM patch 미적용 건은 이월 (아래 admin 섹션 참조).
+
+---
+
+## 이번 세션(2026-05-26) — platform 서비스
+
+### 운영 ECS 안정화
+
+- **PRIMARY revision**: `:151` (image `ef99e6e6`)
+- **ALB DNS (현)**: `lifesy-AppLo-J6LliXisfjNY-1279025200.ap-northeast-2.elb.amazonaws.com` ← 이전 HANDOFF 의 `pLuKs8ilCNwf` 는 deleted 상태
+- base taskdef 정합화 (수동 register `:134`) 후 Pipeline 자동 deploy 도 정상화. Pipeline 의 ECS Deploy stage 는 현재 service taskdef 를 base 로 image 만 교체하기 때문에 base 가 한 번 망가지면 stale 자동 전파 — 수동 `register-task-definition + update-service` 한 번이 필수 (memory: `platform-pipeline-base-taskdef`)
+
+### 주요 변경 (commit 흐름)
+
+| commit | 내용 |
+|---|---|
+| `2fd70ee` | taskdef DB master secret ARN suffix `master-2Q28JC` → `master-o1Xcxo` 정합 |
+| `417a6b5` | CONSENTS key 영문 LONG (INSURANCE/SECURITIES/HEALTHCARE/...) → 라이브 SHORT (INS/SEC/HLT/HOS/ONINS/WBL) 정합 — settings 동의 체크박스 매칭 정상화 |
+| `7c359e9` | `docs/codebuild-role-policy.json` 실 IAM 동기화 + role inline policy 에 `ecs:RegisterTaskDefinition` / `ecs:DescribeTaskDefinition` 추가 (이 권한 누락으로 직전 빌드 실패) |
+| `cda776b` | `start_ls360.sh` 평문 JWT 제거 → Secrets Manager `ecs-jwt-signing` jwt key 로드 |
+| `b818bd6` | `start_ls360.sh` master secret key 매핑 정합 (host/username/password) + Redis 별도 secret 분리 |
+| `75b8514` | taskdef REDIS_HOST 를 실 ElastiCache endpoint `lif-re-viqx38lwzx6o` 로 정합 (taskdef + Secrets Manager 둘 다 통일) |
+| `b708a10` `62fe5af` | 상품 옵션 라벨 영문 → 한글 (43개) + 카테고리별 분기 (interest_rate/monthly_premium). 값 포맷팅 (Y/N → 예/아니오, `650000 KRW` → `650,000원`) |
+| `dc9e0e8` | `_fetch_products` cache hit 분기에도 consent 필터 적용 — G000291135 같은 미동의자가 stale rec cache 의 보험 상품 보던 증상 차단 |
+| `3db1812` | Dockerfile base image `python:3.11-slim` → ECR Public mirror `public.ecr.aws/docker/library/python:3.11-slim` (Docker Hub unauthenticated rate limit 429 회피) |
+| `ac0618e` `ada9e0c` | NBA UI 카드 + 표시 JS + reason 의 `NBA "..." 매칭` 문구 → `AI 추천 매칭` 으로 자연어화. 백엔드 NBA 정렬 가중치는 그대로 |
+| `19341c9` `c6b7922` `83669b3` `d43027d` | platform 설계서 V3 갱신: NBA 텍스트 제거 + JWT 위치 정합 + demo/시연 흔적 제거 + 추천 흐름 7단계 (② 동의 조회 신규, ⑥ 동의 필터 명시) |
+
+### 검증 완료
+- G000261829 (BANK/CARD/HLT/HOS/INS/SEC 동의) → settings 체크박스 HLT/INS/SEC 정상 표시
+- G000291135 (INS/ONINS 미동의) → 보험 상품 추천 제외 SQL 단에서 차단
+
+---
+
+## 인프라 현황 (platform 서비스, 354 계정)
+
+### ECS
+| 자원 | 식별자 |
+|---|---|
+| 클러스터 | `lifesync-service-ecs` |
+| 서비스 | `lifesync-dev-21-lifesync-ecs-existing-vpc-v4-svc` |
+| Task Def family | `lifesync-dev-21-lifesync-ecs-existing-vpc-v4-td` |
+| 현재 PRIMARY | `:151` (image `ef99e6e6`) |
+| ECR | `354493396671.dkr.ecr.ap-northeast-2.amazonaws.com/lifesync-dev-lifesync-service` |
+| ALB DNS | `lifesy-AppLo-J6LliXisfjNY-1279025200.ap-northeast-2.elb.amazonaws.com` |
+| ECS task SG | `sg-0d5719d8a23e3313c` |
+
+### Task Def 환경/시크릿 (정합 후)
+
+env:
+- `USE_MOCK=false`, `AWS_REGION=ap-northeast-2`
+- `DB_NAME=lifesync360`, `DYNAMO_TABLE=lifesync_customer_result`
+- `REDIS_HOST=lif-re-viqx38lwzx6o.lkjrak.0001.apn2.cache.amazonaws.com`, `REDIS_PORT=6379`
+- `ONPREM_QUERY_LAMBDA=lifesync-onprem-customer-query`, `PROFILE_SYNC_LAMBDA=customer-profile-sync`
+
+secrets (valueFrom):
+- `JWT_SECRET` ← `arn:aws:secretsmanager:...:secret:ecs-jwt-signing-QpgPth:jwt::`
+- `DB_USER` / `DB_PASS` / `AURORA_HOST` ← `arn:aws:secretsmanager:...:secret:/lifesync/dev/db/master-o1Xcxo:{username|password|host}::`
+
+### Secrets Manager 진실 (suffix 자주 outdated 됨 — 작업 시 list-secrets 로 직접 조회 권장)
+
+| Secret | 현재 suffix | JSON shape |
+|---|---|---|
+| `ecs-jwt-signing` | `-QpgPth` | `{"jwt": "<64-hex>"}` |
+| `/lifesync/dev/db/master` | `-o1Xcxo` | `{username, password, host, port, dbname, engine}` |
+| `lifesync/dev/redis` | `-6hwssH` | `{host, port}` — start_ls360.sh 가 참조 |
+
+### ElastiCache Redis
+- 실 cluster: `lif-re-viqx38lwzx6o` (endpoint `:6379`)
+- Redis SG `sg-059bfe6ac28dd959e` inbound 6379 에 ECS task SG `sg-0d5719d8a23e3313c` 허용됨
+- CurrItems ≈ 58K — **외부 batch 가 pre-warm 함** (어디서/언제 도는지 미규명)
+
+### CodeBuild role `lifesync-dev-svcplt-codebuild-role`
+- inline policy 9 statements — 실 IAM = `docs/codebuild-role-policy.json`
+- 이번 세션에 `ecs:RegisterTaskDefinition` / `ecs:DescribeTaskDefinition` 추가
+
+---
+
+## 알려진 이슈 / 미해결 (platform)
+
+| 이슈 | 상태 / 다음 액션 |
+|---|---|
+| **`rec:{gid}` cache pre-warm batch 미규명** | Redis CurrItems 58K — 외부 batch process 가 채움. consent gate 없을 가능성 → cache hit 분기에 SQL 단 consent 필터 (`dc9e0e8`) 로 일단 방어. 근본 fix 는 batch 찾아서 consent gate 적용 |
+| **ECS Exec 비활성** | service `enableExecuteCommand=false` + task role 에 `ssmmessages:*` 없음. 컨테이너 내부 진단 필요할 때 권한 추가 + force-new-deploy 필요 |
+| **ECS → Redis 자연 트래픽 검증 미완** | 통일 후 NewConnections=0 길게 유지. 자연 트래픽 시점에 CurrConnections/NewConnections 모니터링으로 검증 가능 |
+| **start_ls360.sh 사용처 미명확** | 어떤 EC2/VM 에서 실행되는지 모름. 운영 ECS 와 별개 환경 추정 |
+| **HANDOFF / docs / 주석의 인프라 식별자 outdated 잦음** | ALB DNS, secret ARN suffix, cluster ID 등 운영 변경에 따라 자주 바뀜. 작업 전 AWS 직접 조회 |
+
+---
 
 ---
 
