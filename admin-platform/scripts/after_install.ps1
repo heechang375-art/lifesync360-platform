@@ -1,8 +1,5 @@
 $ErrorActionPreference = 'Continue'
-$proc = Get-Process -Name python -ErrorAction SilentlyContinue
-if (-not $proc) {
-    Start-ScheduledTask -TaskName "AdminApp" -ErrorAction SilentlyContinue
-    Write-Host "AdminApp task started"
-} else {
-    Write-Host "Python running - Flask auto-reload picks up changes"
-}
+Stop-Process -Name python -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 2
+Start-Process cmd -ArgumentList '/c C:\start-admin.bat' -WindowStyle Hidden
+Write-Host "Flask restarted via start-admin.bat"
