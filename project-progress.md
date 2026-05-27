@@ -9,6 +9,9 @@
 **현재 IP: `192.168.45.157`** (브리지 어댑터, 2026-05-23 변경)
 이전 IP: `172.16.1.73`
 
+> **2026-05-26 주의**: VPN 재구성 중. 현재 EC2 `start-admin.ps1`에 `ONPREM_BASE_URL=http://172.16.1.73` 설정됨 (구IP). Lambda `PRIVATE_API_URL`도 `172.16.1.73`. VPN 완료 후 1·2번 항목 반드시 업데이트 필요.
+> VPN 연결 상태: `vpn-06b4f730ddfd17bc4` / TGW attach `tgw-attach-07d70236bcd767f75` — AcceptedRouteCount=0 (스태틱 라우트 미추가 상태)
+
 ### 변경 필요 위치 (총 5곳)
 
 | # | 위치 | 변경 방법 | 현재 값 |
@@ -62,20 +65,22 @@ CGW(VPN 터미네이션) 설정에 `rightsubnet`이 있으면 서브넷 변경 �
 
 ---
 
-## Admin EC2 앱 배포 경로 (중요)
+## Admin EC2 앱 배포 경로 (중요) — 2026-05-26 확정
 
-> EC2 (i-0784a4837383967bf) 에는 두 개의 admin-platform 디렉토리가 있다.
+> 현재 EC2: `i-0e9ff040046f8c1ca` (Windows)
 
 | 경로 | 용도 |
 |------|------|
-| `C:\admin-platform\` | **실제 실행 경로** — `C:\start-admin.bat`이 여기서 Flask 실행 |
-| `C:\ls\admin-platform\` | git 저장소 사본 — SSM patch 배포 시 이쪽에만 반영되면 반영 안 됨 |
+| `C:/admin-platform/` | **실제 실행 경로** — `C:/start-admin.ps1`이 여기서 Flask 실행 |
 
-**배포 시 반드시 `C:\admin-platform\app.py`를 패치해야 함.**
-`C:\ls\admin-platform\app.py`에 패치해도 실행 중인 Flask에는 영향 없음.
+**배포 방법**: 로컬 `admin-platform/deploy_to_ec2.ps1` 실행 — S3(`lifesync-raw/deploy/app_deploy.zip`) 경유 SSM으로 `C:/admin-platform/`에 직접 복사.
 
-실행 환경 변수: `C:\start-admin.bat` 에서 `SECRET_KEY`, `ADMIN_USER`, `ADMIN_PASSWORD=admin123` 세팅
-로그: `C:\admin-platform\app.log`
+실행 환경 변수: `C:/start-admin.ps1` 에서 설정 (SECRET_KEY, ADMIN_USER, ADMIN_PASSWORD, ONPREM_BASE_URL 등)
+로그: `C:/admin-platform/app.log`
+Flask `debug=True` 모드 — app.py 변경 감지 시 자동 리로드. 프로세스 강제종료 시 수동 재시작 필요:
+```powershell
+Start-Process powershell -ArgumentList '-NonInteractive -WindowStyle Hidden -File C:/start-admin.ps1'
+```
 
 ---
 
@@ -127,6 +132,10 @@ CGW(VPN 터미네이션) 설정에 `rightsubnet`이 있으면 서브넷 변경 �
 | admin-platform — 온프레미스 Lambda 헬퍼 (_call_onprem) 추가 | ✅ |
 | admin-platform — user_detail URL global_id 기반 전환 | ✅ |
 | admin-platform — AI 4개 섹션 + DataVPC 통합 상태 표시 수정 | ✅ |
+| admin-platform — mem_used_percent (LifeSync/EC2) Network 페이지 VM 행 표시 | ✅ 2026-05-26 |
+| admin-platform — 8개 VPC 카드 전체 표시 (pf/we/dt/gvm/mgmt/cn/gcp/on) | ✅ 2026-05-26 |
+| admin-platform — GCP 카드 정상 표시 (BigQuery·Vertex AI·Cloud Run) | ✅ 2026-05-26 |
+| admin-platform — 배포 경로 확정 및 deploy_to_ec2.ps1 생성 | ✅ 2026-05-26 |
 | GitHub → CodeCommit 미러 CI | ✅ |
 | taskdef.json / buildspec.yml / appspec.yaml (platform + admin) | ✅ |
 | IaC / 코드 354 계정 기준 정리 (data.env, taskdef.json, app.py, start_ls360.sh) | ✅ |

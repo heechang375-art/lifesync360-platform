@@ -103,8 +103,6 @@ secrets (valueFrom):
 
 ---
 
----
-
 ## 작업 환경 — 원본 ls + Desktop\ls-copy 분리
 
 | 위치 | 용도 | 계정 |
@@ -221,6 +219,30 @@ Aurora·Redis 연결 영향 없음 (SqlOps는 점프박스용).
 
 ## 남은 작업 (이월)
 
+### On-Prem VPN 재구성 후 필수 작업 (우선순위 1)
+
+VPN 재구성 완료되면 아래 순서대로 처리:
+
+```bash
+# 1. Lambda PRIVATE_API_URL 업데이트 (현재 172.16.1.73 → 실제 IP)
+aws lambda update-function-configuration \
+  --function-name lifesync-onprem-customer-query \
+  --environment "Variables={PRIVATE_API_URL=http://<새IP>}"
+
+# 2. TGW 스태틱 라우트 추가 (AcceptedRouteCount=0 상태)
+aws ec2 create-vpn-connection-route \
+  --vpn-connection-id vpn-06b4f730ddfd17bc4 \
+  --destination-cidr-block <온프렘서브넷>/24
+```
+
+```powershell
+# 3. EC2 start-admin.ps1 수정 (SSM으로)
+# - $env:ONPREM_BASE_URL = "http://172.16.1.73"  ← 이 줄 제거
+# - $env:ONPREM_QUERY_LAMBDA = "lifesync-onprem-customer-query"  ← 추가
+# 수정 후 Flask 재시작:
+# Start-Process powershell -ArgumentList '-NonInteractive -WindowStyle Hidden -File C:/start-admin.ps1'
+```
+
 ### IaC 재배포 / 신규 적용 (담당자 측)
 
 | 항목 | 비고 |
@@ -240,7 +262,6 @@ Aurora·Redis 연결 영향 없음 (SqlOps는 점프박스용).
 | `ml_model_evaluation_daily` 시드 투입 | Precision 카드 데이터 공급 — `seed_ml_evaluation.py` 활용 |
 | Aurora 복구 후 검증 | kpi4 CTR/CVR · 7일 추이 · 도넛 · TOP10 정상 노출 확인 |
 | 온프레미스 재시작 후 검증 | `/internal/profile/list-all` 페이지네이션 + Aurora JOIN end-to-end |
-| EC2 `C:\admin-platform\app.py` 패치 적용 | 2026-05-24 변경분 (CVR fix + raw count 표시) SSM base64 패치 |
 
 ### 코드 개선 권장 (audit 결과)
 
@@ -301,10 +322,13 @@ IP만 바뀌고 서브넷(/24) 그대로면 1, 2번만 처리하면 됨. 상세 
 - 로그: `/opt/ls360.log`
 
 ### 어드민 대시보드
-- EC2: **현재 없음** (24 스택 삭제됨)
-- 재배포: `24-admin-windows-ec2.yaml` 스택
-- RDP 비밀번호: `admin123` (UserData에서 자동 설정 — Secrets Manager 분리 권장)
-- 포트: 5001, Task Scheduler "AdminApp" 자동 시작
+- EC2: `i-0e9ff040046f8c1ca` (Windows, **실행 중**)
+- 실행 경로: `C:/admin-platform/` — `C:/start-admin.ps1`이 여기서 Flask 기동
+- 배포 스크립트: `admin-platform/deploy_to_ec2.ps1` (S3 경유 SSM, app.py + templates + static + wearable_engine.py)
+- 프로세스 재시작: `Start-Process powershell -ArgumentList '-NonInteractive -WindowStyle Hidden -File C:/start-admin.ps1'`
+- Task Scheduler "AdminApp"은 부팅 시에만 자동 시작 (프로세스 사망 시 자동 재시작 없음)
+- Flask `debug=True` — app.py 변경 시 자동 리로드, 단 프로세스 강제종료 시엔 위 명령으로 재시작 필요
+- 포트: 5001 / S3 배포 키: `s3://lifesync-raw/deploy/app_deploy.zip`
 
 ### AWS
 - Aurora MySQL: Secrets Manager `/lifesync/dev/db/master`
@@ -339,15 +363,13 @@ IP만 바뀌고 서브넷(/24) 그대로면 1, 2번만 처리하면 됨. 상세 
 
 | 이슈 | 내용 |
 |------|------|
-| **Aurora deleting** | `auroracluster-db-writer` 삭제 중 → kpi4 CTR/CVR, trend, donut, TOP10 빈 결과 (2026-05-23 확인) |
-| **온프레미스 종료** | 사용자 종료 → 연령대별 차트 DDB fallback (0행이라 빈 상태) (2026-05-23 확인) |
+| **온프레미스 VPN 재구성 중** | VPN 삭제 후 재설정 진행 중 (2026-05-26). 완료 후 아래 on-prem 후속 작업 필수 |
+| **온프레미스 화면 미표시** | `ONPREM_BASE_URL=http://172.16.1.73`이 EC2에서 직접 호출 → 연결 불가. VPN 재구성 완료 후 `start-admin.ps1` 수정 필요 (아래 참고) |
+| **Lambda PRIVATE_API_URL 구IP** | `lifesync-onprem-customer-query`의 `PRIVATE_API_URL=http://172.16.1.73:80` — 현재 on-prem IP는 `192.168.45.157`. VPN 재구성 후 업데이트 필요 |
 | **analytics_segment_performance 0행** | DDB fallback 데이터 없음 → 연령대별 차트 빈 결과 지속 |
 | **ml_model_evaluation_daily 0행** | Precision 카드 빈 결과 |
 | **권한 이슈 5건 IaC 미반영** | 재배포 시 수동 추가 권한이 사라짐 — `docs/iac-handoff-2026-05-24.md` 권한 패치 5건 적용 필수 |
-| **EC2 admin app CVR fix 미적용** | 클라우드 작업 불가 상태라 SSM base64 패치 보류. 로컬 코드만 수정됨 |
 | Redis 타입 불일치 | 플랫폼 app `SETEX`(string) vs 어드민 app `ZREVRANGE`(zset) → 어드민 TOP-N 항상 miss |
-| GCP ADC 미설정 | `GOOGLE_APPLICATION_CREDENTIALS` 없음 → GCP 카드 전부 `-` 표시 |
 | Aurora users_ref 없음 | 어드민 `/users` 이름/이메일 `-` 표시 |
-| Admin EC2 없음 | 스택 삭제됨. `24-admin-windows-ec2` 재배포 필요 |
 | Management subnet 미생성 | `01-network.yaml` 수정됐으나 스택 업데이트 미실행 |
 | INNER JOIN 시드 부정합 risk | `customer_recommend_history × product_master × category_master` — 매칭 깨지면 silently empty (개선: LEFT JOIN 검토) |
