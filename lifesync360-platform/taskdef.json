@@ -29,19 +29,19 @@
       "secrets": [
         {
           "name": "JWT_SECRET",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:ecs-jwt-signing-QpgPth:jwt::"
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:ecs-jwt-signing:jwt::"
         },
         {
           "name": "DB_USER",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:/lifesync/dev/db/master-o1Xcxo:username::"
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:/lifesync/dev/db/master:username::"
         },
         {
           "name": "DB_PASS",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:/lifesync/dev/db/master-o1Xcxo:password::"
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:/lifesync/dev/db/master:password::"
         },
         {
           "name": "AURORA_HOST",
-          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:/lifesync/dev/db/master-o1Xcxo:host::"
+          "valueFrom": "arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:/lifesync/dev/db/master:host::"
         }
       ],
       "logConfiguration": {
