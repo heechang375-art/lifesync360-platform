@@ -2123,14 +2123,14 @@ def _ai_kpi4_from_aws():
                 "  ROUND(SUM(clicked_flag IN ('Y','1')) * 100.0 / COUNT(*), 1) AS ctr, "
                 "  ROUND(SUM(purchased_flag IN ('Y','1')) * 100.0 / COUNT(*), 1) AS cvr "
                 "FROM customer_recommend_history "
-                "WHERE DATE(recommended_at) = CURDATE()"
+                "WHERE recommended_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)"
             )
             _row = _cur.fetchone()
             if _row and _row.get('ctr') is not None:
                 cards[0]['value'] = f"{float(_row['ctr'] or 0):.1f}%"
-                cards[0]['sub']   = f"최근 1일 · customer_recommend_history · {_row['date']}"
+                cards[0]['sub']   = f"최근 7일 평균 · customer_recommend_history · {_row['date']}"
                 cards[1]['value'] = f"{float(_row['cvr'] or 0):.1f}%"
-                cards[1]['sub']   = f"최근 1일 · customer_recommend_history · {_row['date']}"
+                cards[1]['sub']   = f"최근 7일 평균 · customer_recommend_history · {_row['date']}"
     except Exception:
         pass
     try:
