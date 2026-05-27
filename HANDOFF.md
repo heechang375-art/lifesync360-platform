@@ -1,4 +1,4 @@
-# 인수인계 — 2026-05-26 세션 종료 시점
+# 인수인계 — 2026-05-27 세션 종료 시점
 
 새 세션 시작 시 이 파일 먼저 읽고 시작할 것.
 
@@ -8,12 +8,110 @@
 
 ```
 branch: main
-최신 커밋: d43027d  docs(platform): 설계서 V3 xlsx 재생성 (전체 시트 반영본)
+최신 커밋: 1fb3f1d  fix(admin): CodeDeploy 배포 시 Flask 재시작 + debug=True
 ```
 
-2026-05-26 이번 세션 platform 서비스 관련 14개 commit (0015bd7 ~ d43027d) 모두 origin/main 푸시 완료. CI/CD 자동 트리거 (이번 PRIMARY rev=151, image ef99e6e6).
+2026-05-27 이번 세션 admin-platform CI/CD 구성 + IaC 스택 업데이트 완료. 커밋 5개 (6528cec ~ 1fb3f1d) 푸시.
 
-이전 세션 (2026-05-22~25) admin-platform 관련 로컬 변경 / EC2 SSM patch 미적용 건은 이월 (아래 admin 섹션 참조).
+---
+
+## 이번 세션(2026-05-27) — admin-platform CI/CD + IaC
+
+### admin-platform CI/CD 최초 구성 완료
+
+GitHub Actions → CodeCommit → CodePipeline → CodeBuild → CodeDeploy (EC2) 전체 파이프라인 end-to-end 정상 동작.
+
+| 문제 | 수정 내용 |
+|---|---|
+| admin.yml 미러 비활성 (`if: false`) | `if: github.ref == 'refs/heads/main'` 으로 활성화 |
+| CodeCommit 대상 레포 오류 | `lifesync-lifesync-service-admin` → `lifesync-admin-platform` |
+| appspec.yml 없음 | 신규 생성 — `C:\admin-platform\` 에 app.py/templates/static 배포 |
+| buildspec.yml 없음 | 신규 생성 |
+| EC2 DeployGroup 태그 없음 | 수동 태그 추가 (`DeployGroup=admin-platform`) |
+| CodeDeploy agent 없음 | SSM으로 `i-0099e31b62d8a8ceb` 에 설치 |
+| Flask `debug=False` → 배포 후 미반영 | `debug=True` 변경 + `after_install.ps1` 재시작 로직 수정 |
+
+**배포 흐름:**
+```
+GitHub push (admin-platform/**) → admin.yml (GitHub Actions, ~60s)
+  → CodeCommit lifesync-admin-platform → CodePipeline admin-platform-pipeline (~100s)
+  → CodeDeploy → C:\admin-platform\ 파일 교체 → start-admin.bat 으로 Flask 재시작
+```
+
+### app.py 주요 수정
+
+| 수정 | 내용 |
+|---|---|
+| cross-sell grade 필터 (Option B) | `_cs_grade` 동적 SQL — 등급 있으면 `AND p.target_grade = %s` 추가 |
+| 핵심추천지표 CTR/CVR | `WHERE DATE = CURDATE()` (하루) → `INTERVAL 7 DAY` (7일 평균) |
+
+---
+
+## IaC 담당자 전달 (2026-05-27 추가분)
+
+> 이전 전달분(`docs/iac-handoff-2026-05-24.md`)에 추가되는 내용.
+
+### ① 21-lifesync-ecs-existing-vpc.yaml — **스택 업데이트 완료**
+
+ECS ExecutionRole에 `kms:Decrypt` 추가 → **이미 `lifesync-dev-21-lifesync-ecs-existing-vpc-v4` 스택에 적용됨** (UPDATE_COMPLETE).
+IaC 파일도 동기화 완료 (commit `6528cec` 포함).
+
+```yaml
+# EcsExecutionRole InlinePolicy 에 추가된 Statement
+- Sid: KmsDecryptForSsmSecureString
+  Effect: Allow
+  Action: kms:Decrypt
+  Resource: "*"
+  Condition:
+    StringEquals:
+      kms:ViaService: !Sub "ssm.${AWS::Region}.amazonaws.com"
+```
+
+### ② 01b-lifesync-vpc-endpoints.yaml — 스택 없음, 신규 배포 필요
+
+KMS VPC Interface Endpoint 추가. **`lifesync-dev-01b-*` 스택이 현재 존재하지 않음** — 신규 배포 필요.
+
+```yaml
+LifeSyncVpceKms:
+  Type: AWS::EC2::VPCEndpoint
+  Properties:
+    VpcEndpointType: Interface
+    PrivateDnsEnabled: true
+    VpcId: !Ref LifeSyncVpcId
+    ServiceName: !Sub "com.amazonaws.${AWS::Region}.kms"
+    SubnetIds: [!Ref LifeSyncAppPrivateSubnetAId, !Ref LifeSyncAppPrivateSubnetBId]
+    SecurityGroupIds: [!Ref LifeSyncVpceSg]
+```
+
+### ③ 27-onprem-simulator.yaml — 스택 없음, 신규 배포 필요
+
+OnpremSimRole에 lambda:InvokeFunction + DynamoDB 권한 추가, Aurora/Redis SG 인바운드 규칙 추가.
+파라미터 3개 신규: `DbSgId`, `RedisSgId`, `OnpremQueryLambdaArn`
+
+```yaml
+# OnpremSimRole 에 추가된 permissions
+- Effect: Allow
+  Action: lambda:InvokeFunction
+  Resource: !If [HasOnpremQueryLambda, !Ref OnpremQueryLambdaArn,
+    !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:lifesync-onprem-customer-query"]
+- Effect: Allow
+  Action: [dynamodb:Query, dynamodb:GetItem, dynamodb:Scan]
+  Resource: !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/lifesync_customer_result"
+
+# 신규 SG Ingress 리소스
+AuroraIngressFromOnpremSim: TCP 3306, Source: OnpremSimSg → DbSgId
+RedisIngressFromOnpremSim:  TCP 6379, Source: OnpremSimSg → RedisSgId
+```
+
+### 기존 미반영 권한 이슈 현황 (업데이트)
+
+| # | 항목 | 상태 |
+|---|------|------|
+| #10 | ECS ExecutionRole `kms:Decrypt` | **IaC 반영 + 스택 적용 완료** ✓ |
+| #11 | VPC KMS Interface Endpoint | IaC 반영 완료, **스택 미존재 — 신규 배포 필요** |
+| #22 | OnpremSimRole `lambda:InvokeFunction` | IaC 반영 완료, **스택 미존재 — 신규 배포 필요** |
+| #24 | OnpremSimRole DynamoDB Query/GetItem/Scan | IaC 반영 완료, **스택 미존재 — 신규 배포 필요** |
+| #26 | Aurora/Redis SG ← OnpremSim SG 인바운드 | IaC 반영 완료, **스택 미존재 — 신규 배포 필요** |
 
 ---
 
@@ -114,7 +212,7 @@ secrets (valueFrom):
 
 ---
 
-## 현재 활성 스택 (12개, 354 계정)
+## 현재 활성 스택 (13개, 354 계정)
 
 | 스택명 | 상태 |
 |--------|------|
@@ -130,12 +228,13 @@ secrets (valueFrom):
 | lifesync-dev-21-lifesync-ecs-existing-vpc-v4 | UPDATE_COMPLETE |
 | lifesync-dev-22-identity-enricher-lambda | CREATE_COMPLETE |
 | lifesync-dev-24-service-elasticache-lambda | CREATE_COMPLETE |
+| lifesync-dev-26-admin-windows-ec2 | CREATE_COMPLETE |
 
-### 삭제된 스택 (2026-05-22)
+### 삭제된 스택
 
-| 스택명 | 비고 |
-|--------|------|
-| lifesync-dev-24-admin-windows-ec2 | admin EC2 (재배포 필요) |
+| 스택명 | 삭제 시점 | 비고 |
+|--------|----------|------|
+| lifesync-dev-24-admin-windows-ec2 | 2026-05-22 | 26으로 대체됨 |
 | lifesync-dev-final-gcp-tgw-vpn | - |
 | lifesync-dev-final-local-vm-vpn | - |
 | lifesync-dev-gcp-data-exchange-ssm | - |
@@ -322,13 +421,13 @@ IP만 바뀌고 서브넷(/24) 그대로면 1, 2번만 처리하면 됨. 상세 
 - 로그: `/opt/ls360.log`
 
 ### 어드민 대시보드
-- EC2: `i-0e9ff040046f8c1ca` (Windows, **실행 중**)
-- 실행 경로: `C:/admin-platform/` — `C:/start-admin.ps1`이 여기서 Flask 기동
-- 배포 스크립트: `admin-platform/deploy_to_ec2.ps1` (S3 경유 SSM, app.py + templates + static + wearable_engine.py)
-- 프로세스 재시작: `Start-Process powershell -ArgumentList '-NonInteractive -WindowStyle Hidden -File C:/start-admin.ps1'`
-- Task Scheduler "AdminApp"은 부팅 시에만 자동 시작 (프로세스 사망 시 자동 재시작 없음)
-- Flask `debug=True` — app.py 변경 시 자동 리로드, 단 프로세스 강제종료 시엔 위 명령으로 재시작 필요
-- 포트: 5001 / S3 배포 키: `s3://lifesync-raw/deploy/app_deploy.zip`
+- EC2: `i-0099e31b62d8a8ceb` (Windows, `lifesync-dev-26-admin-windows-ec2` 스택, **실행 중**)
+- 실행 경로: `C:/admin-platform/` — **`C:\start-admin.bat`** 이 여기서 Flask 기동 (ps1 아님 주의)
+- 시작 스크립트 위치: `C:\start-admin.bat` — env 설정 후 `cd /d C:\admin-platform && python app.py`
+- **CodeDeploy 자동 배포**: GitHub push → admin.yml → CodeCommit → `admin-platform-pipeline` → `C:\admin-platform\` 자동 교체 + Flask 재시작
+- 수동 재시작 필요 시: `Start-Process cmd -ArgumentList '/c C:\start-admin.bat' -WindowStyle Hidden`
+- Flask `debug=True` — app.py 변경 감지 시 자동 리로드
+- 포트: 5001
 
 ### AWS
 - Aurora MySQL: Secrets Manager `/lifesync/dev/db/master`
@@ -368,7 +467,7 @@ IP만 바뀌고 서브넷(/24) 그대로면 1, 2번만 처리하면 됨. 상세 
 | **Lambda PRIVATE_API_URL 구IP** | `lifesync-onprem-customer-query`의 `PRIVATE_API_URL=http://172.16.1.73:80` — 현재 on-prem IP는 `192.168.45.157`. VPN 재구성 후 업데이트 필요 |
 | **analytics_segment_performance 0행** | DDB fallback 데이터 없음 → 연령대별 차트 빈 결과 지속 |
 | **ml_model_evaluation_daily 0행** | Precision 카드 빈 결과 |
-| **권한 이슈 5건 IaC 미반영** | 재배포 시 수동 추가 권한이 사라짐 — `docs/iac-handoff-2026-05-24.md` 권한 패치 5건 적용 필수 |
+| **권한 이슈 4건 IaC 미반영** | #10 kms:Decrypt는 스택 적용 완료. 나머지 #11/#22/#24/#26 은 01b·27 스택 신규 배포 시 자동 반영 — 위 IaC 담당자 전달 섹션 참고 |
 | Redis 타입 불일치 | 플랫폼 app `SETEX`(string) vs 어드민 app `ZREVRANGE`(zset) → 어드민 TOP-N 항상 miss |
 | Aurora users_ref 없음 | 어드민 `/users` 이름/이메일 `-` 표시 |
 | Management subnet 미생성 | `01-network.yaml` 수정됐으나 스택 업데이트 미실행 |
