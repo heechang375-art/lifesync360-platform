@@ -1,17 +1,27 @@
 # IaC 담당자 전달 — 2026-05-27
 
 > 이전 전달분: `docs/iac-handoff-2026-05-24.md`
-> 이번 전달분에서 수정된 템플릿 파일 3개가 동봉됨.
+> 이번 전달분에서 수정된 파일 6개가 동봉됨 (CloudFormation 템플릿 3개 + admin CI/CD 파일 3개).
 
 ---
 
 ## 변경 요약
+
+### CloudFormation 템플릿
 
 | 파일 | 변경 내용 | 스택 상태 |
 |------|-----------|-----------|
 | `21-lifesync-ecs-existing-vpc.yaml` | EcsExecutionRole에 `kms:Decrypt` 추가 | **스택 적용 완료** ✓ |
 | `01b-lifesync-vpc-endpoints.yaml` | KMS VPC Interface Endpoint 신규 추가 | **스택 미존재 — 신규 배포 필요** |
 | `27-onprem-simulator.yaml` | OnpremSimRole 권한 + Aurora/Redis SG 인바운드 추가 | **스택 미존재 — 신규 배포 필요** |
+
+### Admin 배포 파이프라인 (신규 구성)
+
+| 파일 | 변경 내용 |
+|------|-----------|
+| `appspec.yml` | CodeDeploy 배포 스펙 신규 작성 (Windows, `C:\admin-platform`) |
+| `scripts/after_install.ps1` | AfterInstall 훅 — Python 프로세스 종료 후 `start-admin.bat` 재시작 |
+| `.github/workflows/admin.yml` | GitHub Actions → CodeCommit 미러링 워크플로우 |
 
 ---
 
@@ -140,6 +150,56 @@ RedisIngressFromOnpremSim:
 
 **스택 현황**: 스택이 현재 **존재하지 않음**
 **담당자 조치**: 신규 스택 배포 필요 (파라미터 `DbSgId`, `RedisSgId` 실제 SG ID로 채워서 배포)
+
+---
+
+## ④ Admin 배포 파이프라인 (신규 구성)
+
+**배포 흐름**: GitHub push (`admin-platform/**`) → GitHub Actions 미러 (~60s) → CodeCommit `lifesync-admin-platform` → CodePipeline `admin-platform-pipeline` → CodeBuild → CodeDeploy → EC2 `i-0099e31b62d8a8ceb`
+
+**배포 대상**: EC2 `i-0099e31b62d8a8ceb` (스택 `lifesync-dev-26-admin-windows-ec2`), 경로 `C:\admin-platform`
+
+### appspec.yml (신규)
+
+```yaml
+version: 0.0
+os: windows
+files:
+  - source: app.py
+    destination: C:\admin-platform
+  - source: wearable_engine.py
+    destination: C:\admin-platform
+  - source: templates
+    destination: C:\admin-platform\templates
+  - source: static
+    destination: C:\admin-platform\static
+file_exists_behavior: OVERWRITE
+hooks:
+  AfterInstall:
+    - location: scripts\after_install.ps1
+      timeout: 60
+```
+
+### scripts/after_install.ps1 (재작성)
+
+기존: Flask `debug=False`로 인해 파일 변경 후 자동 리로드 안 됨 → 배포해도 반영 안 되는 문제
+수정: Python 프로세스 강제 종료 후 `start-admin.bat`으로 재시작
+
+```powershell
+$ErrorActionPreference = 'Continue'
+Stop-Process -Name python -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 2
+Start-Process cmd -ArgumentList '/c C:\start-admin.bat' -WindowStyle Hidden
+Write-Host "Flask restarted via start-admin.bat"
+```
+
+### .github/workflows/admin.yml 변경점
+
+- `mirror-to-codecommit` job: `if: false` → `if: github.ref == 'refs/heads/main'` (미러링 활성화)
+- 대상 repo: `lifesync-admin-platform`
+- `git subtree split --prefix=admin-platform`으로 서브폴더만 추출해서 push
+
+**파이프라인 트리거**: `PollForSourceChanges: true` (1분 폴링, 다른 파이프라인과 동일)
 
 ---
 
