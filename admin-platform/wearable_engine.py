@@ -1,17 +1,22 @@
-"""Wearable 실시간 데이터 — 메모리 엔진 (시연용).
-
-운영 시 교체 포인트:
-- `load_initial`     → Kinesis Stream consumer
-- `_state['latest']` → DynamoDB `wearable_latest{global_id}`
-- `_state['red/yellow/device']` → DynamoDB `anomaly_event` scan (최근 N)
-- `tick`             → 실 Kinesis 이벤트 수신 핸들러
-"""
+"""Wearable 실시간 데이터 — Kinesis consumer + mock fallback."""
 import json
 import random
 import threading
 import time
 from collections import deque
 from datetime import datetime, timezone, timedelta
+
+import boto3
+
+_STREAM_NAME = 'lifesync-kinesis-wearable-stream'
+_REGION      = 'ap-northeast-2'
+_SHARD_ID    = 'shardId-000000000000'
+
+_kin_state = {
+    'client':   None,
+    'iterator': None,   # LATEST iterator — tick() 에서 갱신
+    'enabled':  False,  # Kinesis 연결 성공 여부
+}
 
 
 _SURNAMES = ['김', '이', '박', '최', '정', '강', '조', '윤', '장', '임']
@@ -101,8 +106,71 @@ def _record_event(r):
         _state['yellow'].appendleft({**base, 'reasons': ' · '.join(yellow)})
 
 
-# ── 초기 적재 (mock_wearable_batch.json) ────────────────────
+# ── Kinesis 레코드 파싱 ────────────────────────────────────
+def _parse_kinesis_record(raw_data: bytes) -> list:
+    """Kinesis Data 바이트 → record 리스트 반환.
+    단건({"global_id":...}) 또는 배치({"records":[...]}) 모두 처리."""
+    try:
+        obj = json.loads(raw_data.decode('utf-8'))
+    except Exception:
+        return []
+    if isinstance(obj, list):
+        return obj
+    if 'records' in obj:
+        return obj['records']
+    if 'global_id' in obj:
+        return [obj]
+    return []
+
+
+# ── Kinesis 초기 적재 (TRIM_HORIZON) ─────────────────────────
+def _load_from_kinesis() -> bool:
+    """스트림에서 TRIM_HORIZON 기준 전체 레코드 읽기.
+    레코드가 하나라도 있으면 True, 빈 스트림이면 False."""
+    try:
+        client = boto3.client('kinesis', region_name=_REGION)
+        it = client.get_shard_iterator(
+            StreamName=_STREAM_NAME,
+            ShardId=_SHARD_ID,
+            ShardIteratorType='TRIM_HORIZON',
+        )['ShardIterator']
+
+        loaded = 0
+        while it:
+            resp = client.get_records(ShardIterator=it, Limit=1000)
+            for rec in resp.get('Records', []):
+                for r in _parse_kinesis_record(rec['Data']):
+                    if 'global_id' in r:
+                        _state['latest'][r['global_id']] = r
+                        loaded += 1
+            it = resp.get('NextShardIterator')
+            if not resp.get('Records') and resp.get('MillisBehindLatest', 0) == 0:
+                break
+
+        if loaded == 0:
+            return False
+
+        # LATEST iterator 저장 (tick 에서 재사용)
+        _kin_state['client']   = client
+        _kin_state['iterator'] = client.get_shard_iterator(
+            StreamName=_STREAM_NAME,
+            ShardId=_SHARD_ID,
+            ShardIteratorType='LATEST',
+        )['ShardIterator']
+        _kin_state['enabled'] = True
+        return True
+    except Exception:
+        return False
+
+
 def load_initial(path):
+    """Kinesis TRIM_HORIZON 시도 → 빈 스트림이면 mock 파일 fallback."""
+    if _load_from_kinesis():
+        with _lock:
+            _state['registered']   = len(_state['latest'])
+            _state['active_count'] = len(_state['latest'])
+        return
+
     with open(path, encoding='utf-8') as f:
         batch = json.load(f)
     with _lock:
@@ -112,8 +180,40 @@ def load_initial(path):
         _state['active_count'] = len(_state['latest'])
 
 
-# ── 3초 tick — 30명 랜덤 + noise + 재분류 ───────────────────
-def tick():
+# ── tick — Kinesis LATEST 폴링, 없으면 mock noise ──────────
+def _tick_kinesis() -> bool:
+    """Kinesis에서 새 레코드 읽기. 레코드 처리 성공 시 True."""
+    try:
+        client = _kin_state['client']
+        it     = _kin_state['iterator']
+        if not client or not it:
+            return False
+
+        resp = client.get_records(ShardIterator=it, Limit=500)
+        _kin_state['iterator'] = resp.get('NextShardIterator', it)
+
+        records = resp.get('Records', [])
+        if not records:
+            return False
+
+        active = []
+        with _lock:
+            for rec in records:
+                for r in _parse_kinesis_record(rec['Data']):
+                    if 'global_id' in r:
+                        _state['latest'][r['global_id']] = r
+                        _record_event(r)
+                        active.append(r['global_id'])
+            if active:
+                _state['active_count'] = len(active)
+                _state['registered']   = max(_state['registered'], len(_state['latest']))
+        return True
+    except Exception:
+        _kin_state['iterator'] = None  # iterator 만료 시 초기화
+        return False
+
+
+def _tick_mock():
     with _lock:
         gids = list(_state['latest'].keys())
     if not gids:
@@ -132,6 +232,12 @@ def tick():
             _state['latest'][gid] = updated
             _record_event(updated)
         _state['active_count'] = len(sample)
+
+
+def tick():
+    if _kin_state['enabled'] and _tick_kinesis():
+        return
+    _tick_mock()
 
 
 def snapshot():

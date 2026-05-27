@@ -1,0 +1,16 @@
+version: 0.0
+os: windows
+files:
+  - source: app.py
+    destination: C:\admin-platform
+  - source: wearable_engine.py
+    destination: C:\admin-platform
+  - source: templates
+    destination: C:\admin-platform\templates
+  - source: static
+    destination: C:\admin-platform\static
+file_exists_behavior: OVERWRITE
+hooks:
+  AfterInstall:
+    - location: scripts\after_install.ps1
+      timeout: 60

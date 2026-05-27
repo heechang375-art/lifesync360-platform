@@ -278,7 +278,7 @@ window.addEventListener('DOMContentLoaded', function () {
                     AutoRefresh.stampNow('ts-ops-conn');
                 },
             },
-            // Data VPC: S3 / Kinesis / Glue / EMR 통합 상태
+            // Data VPC: S3(raw/processed/curated) / Kinesis / Glue / EMR 통합 상태
             {
                 url: '/api/datavpc/status',
                 apply: function (data) {
@@ -287,9 +287,15 @@ window.addEventListener('DOMContentLoaded', function () {
                     var glue = data.glue    || {};
                     var emr  = data.emr     || {};
                     var rows = [
-                        {name: 'S3 Raw Bucket',  sub: data.s3_bucket  || 'lifesync-raw',
-                         state: data.s3_state || '-',
-                         state_color: data.s3_state === 'EXISTS' ? '#16a34a' : '#dc2626'},
+                        {name: 'S3 Raw',       sub: data.s3_bucket       || 'lifesync-raw',
+                         state: data.s3_state       || '-',
+                         state_color: data.s3_state       === 'EXISTS' ? '#16a34a' : '#dc2626'},
+                        {name: 'S3 Processed', sub: data.s3_proc_bucket  || 'lifesync-processed',
+                         state: data.s3_proc_state  || '-',
+                         state_color: data.s3_proc_state  === 'EXISTS' ? '#16a34a' : '#dc2626'},
+                        {name: 'S3 Curated',   sub: data.s3_cur_bucket   || 'lifesync-curated',
+                         state: data.s3_cur_state   || '-',
+                         state_color: data.s3_cur_state   === 'EXISTS' ? '#16a34a' : '#dc2626'},
                         {name: 'Kinesis Stream', sub: kin.stream_name || '-',
                          state: kin.status || '-',
                          state_color: kin.status === 'ACTIVE' ? '#16a34a' : '#dc2626'},
@@ -302,6 +308,22 @@ window.addEventListener('DOMContentLoaded', function () {
                     ];
                     AutoRefresh.replaceTbody('ops-rows-dt', vpcRowsHtml(rows));
                     AutoRefresh.stampNow('ts-ops-vpc');
+                },
+            },
+            // GCP: BigQuery / Vertex AI / Cloud Run 상태
+            {
+                url: '/api/cloud/status',
+                apply: function (data) {
+                    var gcpList = (data && data.gcp) || [];
+                    if (!gcpList.length) return;
+                    var rows = gcpList.map(function (g) {
+                        var st = g.state || 'UNKNOWN';
+                        var color = st === 'UP' ? '#16a34a' : st === 'UNKNOWN' ? '#f59e0b' : '#dc2626';
+                        var sub = g.error || '';
+                        return { name: g.service, sub: sub, state: st, state_color: color };
+                    });
+                    AutoRefresh.replaceTbody('ops-rows-gcp', vpcRowsHtml(rows));
+                    AutoRefresh.stampNow('ts-ops-conn');
                 },
             },
         ],

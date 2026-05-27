@@ -50,19 +50,20 @@ _bootstrap_dotenv()
 
 def _bootstrap_secrets():
     """Secrets Manager /lifesync/dev/db/master + GCP SA key → os.environ (미설정 항목만 주입)"""
+    _log = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'bootstrap.log')
     try:
         client = boto3.client('secretsmanager', region_name='ap-northeast-2')
         resp = client.get_secret_value(SecretId='/lifesync/dev/db/master')
         d = json.loads(resp['SecretString'])
-        for k, v in d.items():
-            if not os.environ.get(k):
-                os.environ[k] = str(v)
         _alias = {'host': 'AURORA_HOST', 'username': 'DB_USER', 'password': 'DB_PASS', 'dbname': 'DB_NAME'}
         for src, dst in _alias.items():
-            if src in d and not os.environ.get(dst):
+            if src in d:
                 os.environ[dst] = str(d[src])
-    except Exception:
-        pass
+        with open(_log, 'a') as f:
+            f.write(f'DB OK: AURORA_HOST={os.environ.get("AURORA_HOST")} DB_NAME={os.environ.get("DB_NAME")}\n')
+    except Exception as e:
+        with open(_log, 'a') as f:
+            f.write(f'DB ERROR: {e}\n')
     try:
         client = boto3.client('secretsmanager', region_name='ap-northeast-2')
         resp = client.get_secret_value(SecretId='lifesync/gcp/service-account-key')
@@ -101,7 +102,7 @@ DDB_SEGMENT_TABLE    = os.environ.get('DDB_SEGMENT_TABLE',    'analytics_segment
 DDB_DEMOGRAPHIC_TABLE= os.environ.get('DDB_DEMOGRAPHIC_TABLE','analytics_demographic_information')
 AWS_REGION           = os.environ.get('AWS_REGION', 'ap-northeast-2')
 ONPREM_QUERY_LAMBDA  = os.environ.get('ONPREM_QUERY_LAMBDA', '')
-ONPREM_BASE_URL      = os.environ.get('ONPREM_BASE_URL', 'http://192.168.45.157')
+ONPREM_BASE_URL      = os.environ.get('ONPREM_BASE_URL', 'http://172.16.1.73')
 
 GRADES = ['VIP', 'GOLD', 'SILVER', 'BASIC', 'CARE']
 CONSENT_LABELS = {
@@ -115,17 +116,55 @@ CONSENT_LABELS = {
     'ONINS': '온라인보험',
 }
 
-from mockup_data import (
-    MOCKUP_GCP_STATUS_DETAIL,
-    MOCKUP_AI_KPI,
-    MOCKUP_REDIS_PERSONALIZED,
-    MOCKUP_DASH_KPI, MOCKUP_DASH_CLOUD3, MOCKUP_DASH_S3_5, MOCKUP_DASH_RECENT_UPLOADS,
-    MOCKUP_AI_KPI4,
-    MOCKUP_NET_TOPOLOGY,
-    MOCKUP_NET_AWS_PLATFORM, MOCKUP_NET_AWS_DATA, MOCKUP_NET_AWS_GROUPVM,
-    MOCKUP_NET_AWS_WEARABLE, MOCKUP_NET_AWS_MANAGEMENT,
-    MOCKUP_NET_AWS_CONNECTIVITY, MOCKUP_NET_GCP, MOCKUP_NET_ONPREM,
-)
+# ── 카드 구조 정의 (라벨·아이콘·색상만, 값 없음) ────────────────────────────
+_DASH_KPI_CARDS = [
+    {'label': '통합 고객 수',      'sub': '전체 100% · On-Prem master_customer',     'accent': '#3b82f6', 'is_status': False},
+    {'label': '플랫폼 가입자',     'sub': '전체의 30% · On-Prem users',              'accent': '#f59e0b', 'is_status': False},
+    {'label': '분석 대상 고객',    'sub': '가입자의 20% · 동의 완료',                'accent': '#14b8a6', 'is_status': False},
+    {'label': 'AI 추천 상태',      'sub': 'DynamoDB · 오늘 04:30 갱신',              'accent': '#16a34a', 'is_status': True},
+    {'label': '누적 추천 이력',    'sub': 'Aurora customer_recommend_history',       'accent': '#1e293b', 'is_status': False},
+    {'label': '누적 활동 로그',    'sub': 'Aurora customer_dashboard_log',           'accent': '#f59e0b', 'is_status': False},
+    {'label': '추천 CTR (클릭률)', 'sub': 'SUM(clicked) / COUNT(*) · 전체 누적',     'accent': '#16a34a', 'is_status': False},
+    {'label': '구매 전환율 (CVR)', 'sub': 'SUM(purchased) / COUNT(*) · 전체 누적',   'accent': '#3b82f6', 'is_status': False},
+    {'label': 'Redis Cache 수',    'sub': 'rec:{global_id} · SCAN · TTL 6h',         'accent': '#dc2626', 'is_status': False},
+]
+_DASH_CLOUD3_CARDS = [
+    {'badge': 'AWS', 'badge_bg': '#fef3c7', 'badge_color': '#d97706', 'title': 'AWS 클라우드'},
+    {'badge': 'GCP', 'badge_bg': '#dbeafe', 'badge_color': '#2563eb', 'title': 'GCP 클라우드'},
+    {'badge': 'ON',  'badge_bg': '#ccfbf1', 'badge_color': '#0f766e', 'title': '온프레미스'},
+]
+_DASH_S3_5_CARDS = [
+    {'icon': '📁', 'label': 'Raw Bucket 총 파일'},
+    {'icon': '📊', 'label': '금일 적재 건수'},
+    {'icon': '⚡', 'label': '페이로드 데이터'},
+    {'icon': '🔄', 'label': 'Processed 파일 수'},
+    {'icon': '✨', 'label': 'Curated 마트 수'},
+    {'icon': '💾', 'label': '그룹사 적재량'},
+    {'icon': '⏱', 'label': '최근 업로드'},
+]
+_AI_KPI4_CARDS = [
+    {'label': '추천 CTR (클릭률)', 'accent': '#16a34a'},
+    {'label': '거래율 CVR (전환)', 'accent': '#3b82f6'},
+    {'label': '마지막 배치 갱신',  'accent': '#1e293b'},
+    {'label': '분석 대상 고객',    'accent': '#6366f1'},
+]
+_NET_TOPOLOGY = {
+    'aws': [
+        {'name': 'Platform VPC', 'bg': '#fef3c7', 'border': '#f59e0b', 'lines': ['Aurora, Redis,', 'DynamoDB, Lambda,', 'API Gateway, ALB']},
+        {'name': 'Data VPC',     'bg': '#dbeafe', 'border': '#3b82f6', 'lines': ['Glue, EMR,', 'Kinesis,', 'Stream Lambda']},
+        {'name': 'Group VM VPC', 'bg': '#dcfce7', 'border': '#16a34a', 'lines': ['BANK/CARD/SEC/INS/', 'ONINS/HLT/HOS EC2,', 'Wearable EC2']},
+    ],
+    'gcp':    {'name': 'GCP',                 'bg': '#fce7f3', 'border': '#ec4899', 'lines': ['VPC + PSC Endpoint', 'BigQuery / Vertex AI', 'Cloud Run']},
+    'onprem': {'name': 'On-Prem (VirtualBox)', 'bg': '#e0e7ff', 'border': '#6366f1', 'lines': ['Local Lab', 'ls-db (MySQL)', 'ls-tokenz', 'ls-api (PrivateAPI)']},
+}
+_NET_AWS_PLATFORM     = {'title': 'AWS 플랫폼 VPC',   'badge': '',      'badge_bg': '',        'badge_color': ''}
+_NET_AWS_DATA         = {'title': 'AWS 데이터 VPC',   'badge': 'PRIV',  'badge_bg': '#fef3c7', 'badge_color': '#d97706'}
+_NET_AWS_GROUPVM      = {'title': 'AWS 그룹 VM VPC',  'badge': '',      'badge_bg': '',        'badge_color': ''}
+_NET_AWS_WEARABLE     = {'title': 'AWS 웨어러블 VPC', 'badge': 'PRIV',  'badge_bg': '#fce7f3', 'badge_color': '#db2777'}
+_NET_AWS_MANAGEMENT   = {'title': 'AWS 관리 VPC',     'badge': 'PRIV',  'badge_bg': '#e0e7ff', 'badge_color': '#4f46e5'}
+_NET_AWS_CONNECTIVITY = {'title': 'AWS 연결 현황',    'badge': '',      'badge_bg': '',        'badge_color': ''}
+_NET_GCP              = {'title': 'GCP',              'badge': '',      'badge_bg': '',        'badge_color': ''}
+_NET_ONPREM           = {'title': '온프레미스 (VirtualBox)', 'badge': 'Local Lab', 'badge_bg': '#e0e7ff', 'badge_color': '#4f46e5'}
 
 
 # ── Wearable 시연 엔진 부팅 (mock_wearable_batch.json 적재 + 3초 tick) ─
@@ -301,12 +340,10 @@ def _ping_s3_ingestion():
     전체 객체 수는 CloudWatch S3 NumberOfObjects metric (일배치, 1일 지연).
     today/iot/latest 는 도메인 prefix 별 MaxKeys=1000 조회 (페이지네이션 회피).
     """
-    raw_bucket = os.environ.get('LIFESYNC_RAW_S3_BUCKET', '')
-    if not raw_bucket:
-        return {'raw_bucket_files': 0, 'today_ingested': 0, 'iot_count': 0,
-                'last_upload': {}, 'failed_count': 0}
+    raw_bucket = os.environ.get('LIFESYNC_RAW_S3_BUCKET', 'lifesync-raw')
     from datetime import datetime, timezone, timedelta
-    today_prefix = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    today_date = datetime.now(timezone(timedelta(hours=9))).date()  # KST 기준
+    today_prefix = today_date.strftime('%Y-%m-%d')
     total = 0
     try:
         cw = _boto('cloudwatch')
@@ -338,11 +375,32 @@ def _ping_s3_ingestion():
                         iot += 1
                     if latest is None or o['LastModified'] > latest['LastModified']:
                         latest = o
+        processed_count = curated_count = 0
+        try:
+            proc_bucket = os.environ.get('LIFESYNC_PROCESSED_S3_BUCKET', 'lifesync-processed')
+            proc_resp = s3.list_objects_v2(Bucket=proc_bucket, Delimiter='/')
+            proc_prefixes = [p.get('Prefix', '') for p in proc_resp.get('CommonPrefixes', [])
+                             if not p.get('Prefix', '').startswith('_')]
+            for pp in proc_prefixes:
+                for pg in paginator.paginate(Bucket=proc_bucket, Prefix=pp,
+                                             PaginationConfig={'MaxItems': 200}):
+                    processed_count += len(pg.get('Contents', []))
+        except Exception:
+            pass
+        try:
+            cur_bucket = os.environ.get('LIFESYNC_CURATED_S3_BUCKET', 'lifesync-curated')
+            cur_resp = s3.list_objects_v2(Bucket=cur_bucket, Delimiter='/')
+            curated_count = len([p for p in cur_resp.get('CommonPrefixes', [])
+                                 if not p.get('Prefix', '').startswith('_')])
+        except Exception:
+            pass
         return {
             'raw_bucket_files': total,
             'today_ingested':   today,
             'iot_count':        iot,
             'total_size_bytes': total_size,
+            'processed_count':  processed_count,
+            'curated_count':    curated_count,
             'last_upload': {
                 'time': latest['LastModified'].strftime('%H:%M') if latest else '-',
                 'file': latest['Key'].split('/')[-1] if latest else '-',
@@ -352,6 +410,7 @@ def _ping_s3_ingestion():
         }
     except Exception:
         return {'raw_bucket_files': total, 'today_ingested': 0, 'iot_count': 0,
+                'processed_count': 0, 'curated_count': 0,
                 'total_size_bytes': 0, 'last_upload': {}, 'failed_count': 0}
 
 
@@ -393,7 +452,7 @@ def _ping_vm_status():
                     'deploy_group': deploy_group,
                     'vpc':          vpc_name,
                     'cpu_pct': 0,
-                    'mem_pct': None,  # CWAgent 미설치 — 별도 배포 후 보강
+                    'mem_pct': None,
                 })
         _boost_vm_cpu(out)
         return out
@@ -402,9 +461,9 @@ def _ping_vm_status():
 
 
 def _boost_vm_cpu(rows):
-    """AWS/EC2 CPUUtilization 최근 10분 평균을 batch 로 가져와 cpu_pct 보강.
+    """AWS/EC2 CPUUtilization + LifeSync/EC2 mem_used_percent 최근 10분 평균을 batch로 가져와 보강.
 
-    get_metric_data 1 회 호출로 모든 인스턴스를 한꺼번에. 실패 시 0 유지.
+    get_metric_data 1회 호출로 CPU + 메모리 모든 인스턴스를 한꺼번에. 실패 시 기존값 유지.
     """
     if not rows:
         return
@@ -412,25 +471,42 @@ def _boost_vm_cpu(rows):
     try:
         cw    = _boto('cloudwatch')
         now   = datetime.now(timezone.utc)
-        start = now - timedelta(minutes=10)
-        queries = [{
-            'Id': f'cpu{i}',
-            'MetricStat': {
-                'Metric': {
-                    'Namespace': 'AWS/EC2',
-                    'MetricName': 'CPUUtilization',
-                    'Dimensions': [{'Name': 'InstanceId', 'Value': r['vm_id']}],
+        start = now - timedelta(minutes=30)
+        queries = []
+        for i, r in enumerate(rows):
+            queries.append({
+                'Id': f'cpu{i}',
+                'MetricStat': {
+                    'Metric': {
+                        'Namespace': 'AWS/EC2',
+                        'MetricName': 'CPUUtilization',
+                        'Dimensions': [{'Name': 'InstanceId', 'Value': r['vm_id']}],
+                    },
+                    'Period': 300, 'Stat': 'Average',
                 },
-                'Period': 300, 'Stat': 'Average',
-            },
-            'ReturnData': True,
-        } for i, r in enumerate(rows)]
+                'ReturnData': True,
+            })
+            queries.append({
+                'Id': f'mem{i}',
+                'MetricStat': {
+                    'Metric': {
+                        'Namespace': 'LifeSync/EC2',
+                        'MetricName': 'mem_used_percent',
+                        'Dimensions': [{'Name': 'InstanceId', 'Value': r['vm_id']}],
+                    },
+                    'Period': 300, 'Stat': 'Average',
+                },
+                'ReturnData': True,
+            })
         res = cw.get_metric_data(MetricDataQueries=queries, StartTime=start, EndTime=now)
         by_id = {m['Id']: m.get('Values') or [] for m in res.get('MetricDataResults', [])}
         for i, r in enumerate(rows):
-            vals = by_id.get(f'cpu{i}', [])
-            if vals:
-                r['cpu_pct'] = round(vals[0], 1)
+            cpu_vals = by_id.get(f'cpu{i}', [])
+            if cpu_vals:
+                r['cpu_pct'] = round(cpu_vals[0], 1)
+            mem_vals = by_id.get(f'mem{i}', [])
+            if mem_vals:
+                r['mem_pct'] = round(mem_vals[0], 1)
     except Exception:
         pass
 
@@ -801,17 +877,22 @@ def _stub_vertex_metrics():
         models = aiplatform.Model.list(order_by='create_time desc')
         if not models:
             return {}
+        model_list = [
+            {'model_id': m.resource_name, 'display_name': m.display_name, 'create_time': str(m.create_time)}
+            for m in models[:10]
+        ]
         latest = models[0]
         evals  = latest.list_model_evaluations()
-        if not evals:
-            return {'model_id': latest.resource_name, 'evaluations': []}
-        ev = list(evals)[0]
-        return {
-            'model_id'   : latest.resource_name,
+        base = {
+            'model_id'    : latest.resource_name,
             'display_name': latest.display_name,
-            'create_time': str(latest.create_time),
-            'metrics'    : dict(ev.metrics) if hasattr(ev, 'metrics') else {},
+            'create_time' : str(latest.create_time),
+            'models'      : model_list,
         }
+        if not evals:
+            return {**base, 'evaluations': []}
+        ev = list(evals)[0]
+        return {**base, 'metrics': dict(ev.metrics) if hasattr(ev, 'metrics') else {}}
     except Exception:
         return {}
 
@@ -840,6 +921,10 @@ def _stub_bigquery_analytics(query_kind='recommendation_mart'):
                       FROM `{_gcp_project()}.lifesync_ml.vip_prediction_result`
                       WHERE actual_label IS NOT NULL
                       GROUP BY model_name"""
+        elif query_kind == 'model_metrics':
+            sql = f"""SELECT model_name, auc, accuracy, precision, recall, mae, train_size, test_size, trained_at
+                      FROM `{_gcp_project()}.lifesync_ml.model_metrics`
+                      ORDER BY trained_at DESC"""
         else:
             return []
         return [dict(row) for row in bq.query(sql).result()]
@@ -849,6 +934,20 @@ def _stub_bigquery_analytics(query_kind='recommendation_mart'):
 
 _redis_client = None
 
+_ddb_ai_target_cache = {'value': None, 'ts': 0.0}
+_DDB_AI_TARGET_TTL   = 300  # 5분 — 배치가 하루 1회라 충분
+
+_redis_rec_cache = {'value': None, 'ts': 0.0}
+_REDIS_REC_TTL   = 300  # 5분
+
+_onprem_counts_cache = {'value': None, 'ts': 0.0}
+_ONPREM_COUNTS_TTL   = 300  # 5분 — on-prem count 3종 묶음 캐시
+
+_aurora_dash_cache = {'value': None, 'ts': 0.0}
+_AURORA_DASH_TTL   = 300  # 5분 — recommend_history 통계 + dashboard_log count
+
+_dash_summary_cache = {'value': None, 'ts': 0.0}
+_DASH_SUMMARY_TTL   = 300  # 5분 — 대시보드 KPI 전체 결과 캐시
 
 def _get_redis():
     global _redis_client
@@ -871,21 +970,32 @@ def _get_redis():
 
 
 def _stub_redis_personalized(global_id):
-    """
-    Redis Personalized Top 3 — ZREVRANGE rec:{global_id} 0 N WITHSCORES (TTL 6h).
-    miss/실패 시 빈 dict 반환 → /users/<id> 라우트에서 MOCKUP_REDIS_PERSONALIZED fallback.
-    """
     r = _get_redis()
     if r is None:
         return {}
     try:
-        pairs = r.zrevrange(f'rec:{global_id}', 0, 2, withscores=True)
-        if not pairs:
-            return {}
-        return {
-            'top': [{'product_id': pid, 'score': float(score)} for pid, score in pairs],
-            'source': 'redis',
-        }
+        key = f'rec:{global_id}'
+        ktype = r.type(key)
+        if ktype == 'zset':
+            pairs = r.zrevrange(key, 0, 2, withscores=True)
+            if not pairs:
+                return {}
+            return {
+                'top': [{'product_id': pid} for pid, _ in pairs],
+                'source': 'redis',
+            }
+        elif ktype == 'string':
+            raw = r.get(key)
+            if not raw:
+                return {}
+            ids = json.loads(raw)
+            if not isinstance(ids, list) or not ids:
+                return {}
+            return {
+                'top': [{'product_id': str(pid)} for pid in ids[:3]],
+                'source': 'redis',
+            }
+        return {}
     except Exception:
         return {}
 
@@ -1017,6 +1127,65 @@ def _aurora_pr_models():
         return []
 
 
+def _aurora_ai_kpi():
+    """AI KPI — customer_recommend_history 7일 평균 CTR/CVR + BigQuery model_metrics 최신 지표."""
+    result = {'ctr_7d': None, 'cvr_7d': None, 'accuracy': None, 'precision': None}
+    try:
+        with get_db() as db, db.cursor() as cur:
+            cur.execute(
+                "SELECT ROUND(SUM(clicked_flag IN ('Y','1')) * 100.0 / COUNT(*), 1) AS ctr_7d, "
+                "       ROUND(SUM(purchased_flag IN ('Y','1')) * 100.0 / COUNT(*), 1) AS cvr_7d "
+                "FROM customer_recommend_history "
+                "WHERE recommended_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)"
+            )
+            row = cur.fetchone() or {}
+            if row.get('ctr_7d') is not None:
+                result['ctr_7d'] = float(row['ctr_7d'])
+            if row.get('cvr_7d') is not None:
+                result['cvr_7d'] = float(row['cvr_7d'])
+    except Exception:
+        pass
+    try:
+        bq = _get_bq()
+        if bq:
+            proj = _gcp_project()
+            sql = (
+                f"SELECT ROUND(accuracy * 100, 1) AS accuracy, "
+                f"       ROUND(precision, 4) AS precision_score "
+                f"FROM `{proj}.lifesync_ml.model_metrics` "
+                f"WHERE model_name = 'vip' "
+                f"ORDER BY trained_at DESC LIMIT 1"
+            )
+            rows = list(bq.query(sql).result())
+            if rows:
+                row = dict(rows[0])
+                if row.get('accuracy') is not None:
+                    result['accuracy'] = float(row['accuracy'])
+                if row.get('precision_score') is not None:
+                    result['precision'] = float(row['precision_score'])
+    except Exception:
+        pass
+    if result.get('accuracy') is None:
+        try:
+            with get_db() as db, db.cursor() as cur:
+                cur.execute(
+                    "SELECT ROUND(accuracy * 100, 1) AS accuracy, "
+                    "       ROUND(precision_score, 4) AS precision_score "
+                    "FROM ml_model_evaluation_daily "
+                    "ORDER BY eval_date DESC LIMIT 1"
+                )
+                row = cur.fetchone() or {}
+                if row.get('accuracy') is not None:
+                    result['accuracy'] = float(row['accuracy'])
+                if row.get('precision_score') is not None:
+                    result['precision'] = float(row['precision_score'])
+        except Exception:
+            pass
+    result.pop('recall', None)
+    result.pop('pr_combined', None)
+    return result
+
+
 def _ddb_score_histogram_for_ai():
     """AI 예측 출현 분포 — dynamic_score 5-bucket 히스토그램 (chart histogram 용)."""
     try:
@@ -1056,7 +1225,7 @@ def _ddb_query_today(table_name, sk_prefix=None, sk_attr='segment_key'):
 
 
 def _aurora_customer_insight():
-    """고객 인사이트 분석 — Aurora customer_recommend_history 7일 집계."""
+    """고객 인사이트 분석 — Aurora customer_recommend_history 전체 집계."""
     try:
         with get_db() as db, db.cursor() as cur:
             cur.execute(
@@ -1064,14 +1233,13 @@ def _aurora_customer_insight():
                 "       ROUND(SUM(clicked_flag IN ('Y','1')) * 100.0 / COUNT(*), 1) AS avg_ctr, "
                 "       ROUND(SUM(purchased_flag IN ('Y','1')) * 100.0 / COUNT(*), 1) AS avg_cvr, "
                 "       COUNT(*) AS total_rec "
-                "FROM customer_recommend_history "
-                "WHERE recommended_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)"
+                "FROM customer_recommend_history"
             )
             row = cur.fetchone() or {}
         if not row or not row.get('total_rec'):
             return {'source': 'Aurora · customer_recommend_history', 'rows': []}
         return {
-            'source': 'Aurora · customer_recommend_history (최근 7일)',
+            'source': 'Aurora · customer_recommend_history (전체)',
             'rows': [
                 {'label': '활성 고객', 'value': f"{int(row['active_customers'] or 0):,}명", 'sub': '추천 기록 보유'},
                 {'label': '평균 CTR', 'value': f"{float(row['avg_ctr'] or 0):.1f}%", 'sub': '추천 클릭률'},
@@ -1096,6 +1264,23 @@ def login_required(f):
 @app.route('/health')
 def health():
     return {'status': 'ok'}
+
+
+@app.route('/debug/env')
+def debug_env():
+    import pymysql
+    result = {
+        'AURORA_HOST': os.environ.get('AURORA_HOST', 'NOT SET'),
+        'DB_NAME': os.environ.get('DB_NAME', 'NOT SET'),
+        'DB_USER': os.environ.get('DB_USER', 'NOT SET'),
+    }
+    try:
+        with get_db() as db, db.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS rec_count FROM customer_recommend_history WHERE recommended_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)")
+            result['db_test'] = cur.fetchone()
+    except Exception as e:
+        result['db_error'] = str(e)
+    return jsonify(result)
 
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -1135,9 +1320,9 @@ def overview():
 def dashboard():
     return render_template('dashboard.html',
         active='dashboard',
-        kpi=[dict(c, value='-') for c in MOCKUP_DASH_KPI],
-        cloud3=[dict(c, state='-', sub='-') for c in MOCKUP_DASH_CLOUD3],
-        s3_cards=[dict(c, value='-', note='-') for c in MOCKUP_DASH_S3_5],
+        kpi=[dict(c, value='-') for c in _DASH_KPI_CARDS],
+        cloud3=[dict(c, state='-', sub='-') for c in _DASH_CLOUD3_CARDS],
+        s3_cards=[dict(c, value='-', note='-') for c in _DASH_S3_5_CARDS],
         uploads=[],
     )
 
@@ -1273,7 +1458,7 @@ def users():
                 _db.close()
             for i, p in enumerate(personalized['top']):
                 pid = int(p['product_id'])
-                topn.append({'rank': i + 1, 'product': _pm.get(pid, f'상품 {pid}'), 'score': f"{float(p['score']):.2f}"})
+                topn.append({'rank': i + 1, 'product': _pm.get(pid, f'상품 {pid}')})
     except Exception:
         pass
 
@@ -1283,11 +1468,19 @@ def users():
         _db = get_db()
         try:
             with _db.cursor() as _cur:
+                _cs_grade = (profile.get('grade') or '').strip()
+                if _cs_grade and _cs_grade != '-':
+                    _cs_grade_sql = 'AND p.target_grade = %s '
+                    _cs_params = (_cs_grade, q)
+                else:
+                    _cs_grade_sql = ''
+                    _cs_params = (q,)
                 _cur.execute(
                     'SELECT r.target_category, '
                     '(SELECT p.product_name FROM product_master p '
                     ' JOIN category_master c2 ON p.category_id = c2.category_id '
                     ' WHERE c2.category_code = r.target_category AND p.active_flag = "Y" '
+                    + _cs_grade_sql +
                     ' ORDER BY p.priority_rank ASC LIMIT 1) AS product_name, '
                     '(SELECT c3.category_name FROM category_master c3 WHERE c3.category_code = r.target_category LIMIT 1) AS category_name '
                     'FROM cross_sell_rule r WHERE r.active_flag = "Y" '
@@ -1298,7 +1491,7 @@ def users():
                     '    WHERE h.global_id = %s AND h.purchased_flag IN (\'Y\', \'1\')'
                     '  ) '
                     'ORDER BY r.priority_rank ASC LIMIT 3',
-                    (q,)
+                    _cs_params
                 )
                 for row in _cur.fetchall():
                     if row['product_name']:
@@ -1336,7 +1529,7 @@ def users():
     nba = {
         'action': _nba_action_map.get(_grade, '-'),
         'targets': [
-            {'label': 'VIP 전환 확률', 'state': f'{_vip_prob:.0%}'},
+            {'label': 'VIP 전환 확률', 'state': f'{_vip_prob:.1%}'},
             {'label': '추천 반응 확률', 'state': f'{_rec_prob:.0%}'},
             {'label': '가입 확률', 'state': f'{_signup_prob:.0%}'},
         ] if _scores else [],
@@ -1348,8 +1541,13 @@ def users():
         precision = [
             {'label': 'AI 점수', 'value': f"{_dyn_score:.0f}", 'color': '#6366f1'},
             {'label': 'AI 등급', 'value': _grade, 'color': '#f59e0b'},
-            {'label': 'VIP 확률', 'value': f'{_vip_prob:.0%}', 'color': '#14b8a6'},
+            {'label': 'VIP 전환 가능성', 'value': f'{_vip_prob:.1%}', 'color': '#14b8a6'},
         ]
+        profile['grade']          = _grade
+        profile['ai_total_score'] = f"{_dyn_score:.1f}"
+        _hs = (_scores or {}).get('health_score')
+        if _hs is not None:
+            profile['ai_health_score'] = f"{float(_hs):.1f}"
 
     # ⑥ 최근 추천 활동 (Aurora customer_recommend_history)
     recent_recommend = []
@@ -1471,7 +1669,7 @@ def user_detail(global_id):
     }
 
     # Redis Personalized Top 3 (ElastiCache 가동 후 활성)
-    personalized = _stub_redis_personalized(global_id) or MOCKUP_REDIS_PERSONALIZED
+    personalized = _stub_redis_personalized(global_id) or {}
 
     return render_template('user_detail.html',
         active='customer',
@@ -1515,7 +1713,7 @@ def ai():
 @app.route('/api/admin/recommend-trend')
 @login_required
 def api_admin_recommend_trend():
-    """P3 r10. Aurora customer_recommend_daily 최근 7일 + 평균."""
+    """P3 r10. Aurora customer_recommend_history 최근 7일 GROUP BY DATE."""
     rows = _aurora_recommend_trend_7day()
     return jsonify(rows)
 
@@ -1554,19 +1752,47 @@ def api_admin_local_lab_status():
 def _stub_aurora_summary():
     """P1 r29 — KPI 9 카드 list (시연↔운영 동일 구조).
 
-    응답 스키마: MOCKUP_DASH_KPI 와 동일 9-element list — 각 요소 `{label, value, sub, accent, is_status}`.
-    실 호출 결과로 value 만 덮어쓰고, 실패한 카드는 mockup 값 fallback.
+    응답 스키마: _DASH_KPI_CARDS 와 동일 9-element list — 각 요소 `{label, value, sub, accent, is_status}`.
+    실 호출 결과로 value 만 덮어씀. 실패한 카드는 '-' 표시.
     """
-    cards = [dict(c, value='-') for c in MOCKUP_DASH_KPI]
-
-    # KPI 1~3: On-Prem Lambda (VPN 연결 필요)
-    for idx, action, tout in [(0, 'count_master_customer', 8), (1, 'count_users', 8), (2, 'count_users_consented', 20)]:
+    _rc = _get_redis()
+    if _rc:
         try:
-            c = (_call_onprem(action, timeout=tout) or {}).get('count')
-            if c is not None:
-                cards[idx]['value'] = f'{int(c):,}'
+            _cached = _rc.get('cache:dash_summary')
+            if _cached:
+                return json.loads(_cached)
         except Exception:
             pass
+
+    cards = [dict(c, value='-') for c in _DASH_KPI_CARDS]
+
+    # KPI 1~3: On-Prem Lambda (VPN 연결 필요) — TTL 캐시 + 병렬 호출
+    import concurrent.futures as _cf
+
+    _now_op = time.time()
+    if (_onprem_counts_cache['value'] is not None
+            and _now_op - _onprem_counts_cache['ts'] < _ONPREM_COUNTS_TTL):
+        for idx, c in enumerate(_onprem_counts_cache['value']):
+            if c is not None:
+                cards[idx]['value'] = f'{c:,}'
+    else:
+        def _fetch_onprem_count(action, tout):
+            try:
+                c = (_call_onprem(action, timeout=tout) or {}).get('count')
+                return int(c) if c is not None else None
+            except Exception:
+                return None
+
+        with _cf.ThreadPoolExecutor(max_workers=3) as _ex:
+            _f0 = _ex.submit(_fetch_onprem_count, 'count_master_customer', 8)
+            _f1 = _ex.submit(_fetch_onprem_count, 'count_users', 8)
+            _f2 = _ex.submit(_fetch_onprem_count, 'count_users_consented', 20)
+            _counts = [_f0.result(), _f1.result(), _f2.result()]
+        _onprem_counts_cache['value'] = _counts
+        _onprem_counts_cache['ts']    = time.time()
+        for idx, c in enumerate(_counts):
+            if c is not None:
+                cards[idx]['value'] = f'{c:,}'
 
     # KPI 4: AI 추천 상태 — DDB 최신 update_time
     try:
@@ -1577,45 +1803,76 @@ def _stub_aurora_summary():
     except Exception:
         pass
 
-    # KPI 5~8: Aurora 추천 통계
-    try:
-        with get_db() as db, db.cursor() as cur:
-            cur.execute(
-                "SELECT COUNT(*) AS total, "
-                "SUM(clicked_flag IN ('Y','1')) AS clicked, "
-                "SUM(purchased_flag IN ('Y','1')) AS purchased "
-                "FROM customer_recommend_history"
-            )
-            r = cur.fetchone()
-            if r and r['total']:
-                cards[4]['value'] = f"{int(r['total']):,}"
-                clk = r['clicked'] or 0
-                pur = r['purchased'] or 0
-                ctr = clk / r['total'] * 100
-                cvr = round(pur * 100.0 / clk, 1) if clk else 0
-                cards[6]['value'] = f"{ctr:.1f}%"
-                cards[7]['value'] = f"{cvr:.1f}%"
-    except Exception:
-        pass
+    # KPI 5~8: Aurora 추천 통계 — TTL 캐시
+    _now_au = time.time()
+    if (_aurora_dash_cache['value'] is not None
+            and _now_au - _aurora_dash_cache['ts'] < _AURORA_DASH_TTL):
+        _ac = _aurora_dash_cache['value']
+        if _ac.get('tot'):
+            cards[4]['value'] = f"{_ac['tot']:,}"
+            cards[6]['value'] = f"{_ac['ctr']:.1f}%"
+            cards[7]['value'] = f"{_ac['cvr']:.1f}%"
+        if _ac.get('log_cnt') is not None:
+            n = _ac['log_cnt']
+            cards[5]['value'] = f"{n/1e6:.1f}M" if n >= 1_000_000 else f"{n:,}"
+    else:
+        _ac = {}
+        try:
+            with get_db() as db, db.cursor() as cur:
+                cur.execute(
+                    "SELECT COUNT(*) AS total, "
+                    "SUM(clicked_flag IN ('Y','1')) AS clicked, "
+                    "SUM(purchased_flag IN ('Y','1')) AS purchased "
+                    "FROM customer_recommend_history"
+                )
+                r = cur.fetchone()
+                if r and r['total']:
+                    tot = int(r['total'])
+                    clk = float(r['clicked'] or 0)
+                    pur = float(r['purchased'] or 0)
+                    _ac['tot'] = tot
+                    _ac['ctr'] = clk / tot * 100
+                    _ac['cvr'] = pur / tot * 100
+                    cards[4]['value'] = f"{tot:,}"
+                    cards[6]['value'] = f"{_ac['ctr']:.1f}%"
+                    cards[7]['value'] = f"{_ac['cvr']:.1f}%"
+        except Exception:
+            pass
+        try:
+            with get_db() as db, db.cursor() as cur:
+                cur.execute("SELECT COUNT(*) AS cnt FROM customer_dashboard_log")
+                r = cur.fetchone()
+                if r:
+                    n = int(r['cnt'])
+                    _ac['log_cnt'] = n
+                    cards[5]['value'] = f"{n/1e6:.1f}M" if n >= 1_000_000 else f"{n:,}"
+        except Exception:
+            pass
+        if _ac:
+            _aurora_dash_cache['value'] = _ac
+            _aurora_dash_cache['ts']    = time.time()
 
-    try:
-        with get_db() as db, db.cursor() as cur:
-            cur.execute("SELECT COUNT(*) AS cnt FROM customer_dashboard_log")
-            r = cur.fetchone()
-            if r:
-                n = int(r['cnt'])
-                cards[5]['value'] = f"{n/1e6:.1f}M" if n >= 1_000_000 else f"{n:,}"
-    except Exception:
-        pass
-
-    # KPI 9: Redis DBSIZE
+    # KPI 9: Redis rec:* 키 수 (추천 캐시만 집계) — TTL 캐시로 매 갱신 시 scan 방지
     try:
         rc = _get_redis()
         if rc:
-            cards[8]['value'] = f"{rc.dbsize():,}"
+            _now = time.time()
+            if (_redis_rec_cache['value'] is not None
+                    and _now - _redis_rec_cache['ts'] < _REDIS_REC_TTL):
+                _rcnt = _redis_rec_cache['value']
+            else:
+                _rcnt = sum(1 for _ in rc.scan_iter('rec:*'))
+                _redis_rec_cache['value'] = _rcnt
+                _redis_rec_cache['ts']    = _now
+            cards[8]['value'] = f'{_rcnt:,}'
     except Exception:
         pass
 
+    if _rc:
+        try:
+            _rc.setex('cache:dash_summary', _DASH_SUMMARY_TTL, json.dumps(cards))
+        except Exception:
+            pass
     return cards
 
 
@@ -1653,7 +1910,7 @@ def _stub_aurora_activity(global_id, limit=50):
 def _stub_recommend_stats():
     """P3 r27 — CTR/CVR/상품 TOP10/7일 추이/세그먼트별 성과 종합."""
     return {
-        'kpi'              : MOCKUP_AI_KPI,
+        'kpi'              : _aurora_ai_kpi(),
         'trend_7day'       : _aurora_recommend_trend_7day(),
         'segment_today'    : _ddb_query_today(DDB_SEGMENT_TABLE),
         'prob_distribution': _ddb_prob_distribution(),
@@ -1663,7 +1920,7 @@ def _stub_recommend_stats():
 def _stub_ai_summary():
     """P3 r29 — AI 출력 분포 + 모델 평가 (Precision/Recall/Accuracy)."""
     return {
-        'ai_kpi'        : MOCKUP_AI_KPI,
+        'ai_kpi'        : _aurora_ai_kpi(),
         'vertex_metrics': _stub_vertex_metrics() or {},
         'score_dist'    : _ddb_score_distribution(),
     }
@@ -1679,24 +1936,25 @@ def api_dashboard_summary():
 
 
 def _s3_status_cards():
-    """P1 r30 — S3 적재 5 카드 list (시연↔운영 동일 구조).
+    """P1 r30 — S3 적재 7 카드 list (raw/today/iot/processed/curated/size/lastupload).
 
-    응답: MOCKUP_DASH_S3_5 와 동일 5-element list — `{icon, label, value, note}`.
+    응답: _DASH_S3_5_CARDS 와 동일 7-element list — `{icon, label, value, note}`.
     """
     raw = _ping_s3_ingestion() or {}
     last = raw.get('last_upload') or {}
     iot  = raw.get('iot_count', 0)
     size_gb = (raw.get('total_size_bytes', 0) / 1024 / 1024 / 1024) if raw.get('total_size_bytes') else 0
 
-    # 카드 5개 구조 유지 + value/note 빈 값으로 초기화 (안 들어오는 항목은 그대로 비어 보임)
-    cards = [dict(c, value='-', note='-') for c in MOCKUP_DASH_S3_5]
-    if raw.get('raw_bucket_files'): cards[0]['value'] = f"{raw['raw_bucket_files']:,}"
-    if raw.get('today_ingested'):   cards[1]['value'] = f"{raw['today_ingested']:,}"
-    if iot:                         cards[2]['value'] = f"{iot:,}"
-    if size_gb:                     cards[3]['value'] = f"{size_gb:.1f} GB"
+    cards = [dict(c, value='-', note='-') for c in _DASH_S3_5_CARDS]
+    if raw.get('raw_bucket_files'):  cards[0]['value'] = f"{raw['raw_bucket_files']:,}"; cards[0]['note'] = 'lifesync-raw'
+    if raw.get('today_ingested'):    cards[1]['value'] = f"{raw['today_ingested']:,}";   cards[1]['note'] = 'dt=오늘'
+    if iot:                          cards[2]['value'] = f"{iot:,}";                     cards[2]['note'] = 'Kinesis · wearable'
+    if raw.get('processed_count'):   cards[3]['value'] = f"{raw['processed_count']:,}";  cards[3]['note'] = 'lifesync-processed'
+    if raw.get('curated_count'):     cards[4]['value'] = f"{raw['curated_count']:,}";    cards[4]['note'] = 'lifesync-curated'
+    if size_gb:                      cards[5]['value'] = f"{size_gb:.1f} GB";            cards[5]['note'] = 'raw 전체 합산'
     if last.get('time'):
-        cards[4]['value'] = last['time']
-        cards[4]['note']  = last.get('file', '-')
+        cards[6]['value'] = last['time']
+        cards[6]['note']  = last.get('file', '-')
     return cards
 
 
@@ -1711,13 +1969,13 @@ def api_s3_status():
 @login_required
 def api_cloud_status():
     """P1 r31. AWS/GCP 헬스 종합."""
-    return jsonify({'aws': _ping_cloud_status(), 'gcp': _stub_gcp_status() or MOCKUP_GCP_STATUS_DETAIL})
+    return jsonify({'aws': _ping_cloud_status(), 'gcp': _stub_gcp_status()})
 
 
 def _cloud3_from_aws():
     """AWS / GCP / On-Prem 3 카드 + 서비스별 details. 안 들어오는 데이터는 '-' 로 비워둠."""
     aws_list = _ping_cloud_status() or []
-    cards = [dict(c, state='-', sub='-', details=[]) for c in MOCKUP_DASH_CLOUD3]
+    cards = [dict(c, state='-', sub='-', details=[]) for c in _DASH_CLOUD3_CARDS]
 
     if aws_list:
         up = sum(1 for x in aws_list if x.get('state') == 'UP')
@@ -1817,9 +2075,7 @@ _BADGE_MAP = {
 
 def _uploads_from_s3(limit=10):
     """S3 raw bucket 최근 업로드 N건 — 도메인 prefix 별 MaxKeys=50 후 합산 정렬."""
-    raw_bucket = os.environ.get('LIFESYNC_RAW_S3_BUCKET', '')
-    if not raw_bucket:
-        return MOCKUP_DASH_RECENT_UPLOADS
+    raw_bucket = os.environ.get('LIFESYNC_RAW_S3_BUCKET', 'lifesync-raw')
     try:
         s3 = _boto('s3')
         objs = []
@@ -1841,9 +2097,9 @@ def _uploads_from_s3(limit=10):
                 'badge_color': badge['badge_color'],
                 'size': f'{size_mb:.1f} MB' if size_mb >= 0.1 else f'{o["Size"]/1024:.1f} KB',
             })
-        return out or MOCKUP_DASH_RECENT_UPLOADS
+        return out
     except Exception:
-        return MOCKUP_DASH_RECENT_UPLOADS
+        return []
 
 
 @app.route('/api/dashboard/uploads')
@@ -1859,16 +2115,22 @@ def api_dashboard_uploads():
 def _ai_kpi4_from_aws():
     """ai.html KPI 4 — Lambda CloudWatch metric 활용. Aurora 실패 시 mock fallback."""
     # 안 들어오는 항목은 '-' 로 비워둠
-    cards = [dict(c, value='-', sub='-') for c in MOCKUP_AI_KPI4]
+    cards = [dict(c, value='-', sub='-') for c in _AI_KPI4_CARDS]
     try:
         with get_db() as _db, _db.cursor() as _cur:
-            _cur.execute('SELECT ctr, cvr, date FROM customer_recommend_daily ORDER BY date DESC LIMIT 1')
+            _cur.execute(
+                "SELECT CURDATE() AS date, "
+                "  ROUND(SUM(clicked_flag IN ('Y','1')) * 100.0 / COUNT(*), 1) AS ctr, "
+                "  ROUND(SUM(purchased_flag IN ('Y','1')) * 100.0 / COUNT(*), 1) AS cvr "
+                "FROM customer_recommend_history "
+                "WHERE DATE(recommended_at) = CURDATE()"
+            )
             _row = _cur.fetchone()
-            if _row:
+            if _row and _row.get('ctr') is not None:
                 cards[0]['value'] = f"{float(_row['ctr'] or 0):.1f}%"
-                cards[0]['sub']   = f"최근 1일 · customer_recommend_daily · {_row['date']}"
+                cards[0]['sub']   = f"최근 1일 · customer_recommend_history · {_row['date']}"
                 cards[1]['value'] = f"{float(_row['cvr'] or 0):.1f}%"
-                cards[1]['sub']   = f"최근 1일 · customer_recommend_daily · {_row['date']}"
+                cards[1]['sub']   = f"최근 1일 · customer_recommend_history · {_row['date']}"
     except Exception:
         pass
     try:
@@ -1883,15 +2145,34 @@ def _ai_kpi4_from_aws():
     except Exception:
         pass
     try:
-        _ddb_c = boto3.client('dynamodb', region_name=AWS_REGION)
-        _cnt   = 0
-        _kw    = {'TableName': 'lifesync_customer_result', 'Select': 'COUNT'}
-        while True:
-            _r = _ddb_c.scan(**_kw)
-            _cnt += _r['Count']
-            if 'LastEvaluatedKey' not in _r:
-                break
-            _kw['ExclusiveStartKey'] = _r['LastEvaluatedKey']
+        import time as _time, concurrent.futures as _cf
+        _now = _time.time()
+        if _ddb_ai_target_cache['value'] is not None and _now - _ddb_ai_target_cache['ts'] < _DDB_AI_TARGET_TTL:
+            _cnt = _ddb_ai_target_cache['value']
+        else:
+            _ddb_c = boto3.client('dynamodb', region_name=AWS_REGION)
+            _SEGS  = 4
+
+            def _scan_seg(seg):
+                gids, kw = set(), {
+                    'TableName': 'lifesync_customer_result',
+                    'ProjectionExpression': 'global_id',
+                    'Segment': seg, 'TotalSegments': _SEGS,
+                }
+                while True:
+                    r = _ddb_c.scan(**kw)
+                    for it in r.get('Items', []):
+                        gids.add(it['global_id']['S'])
+                    if 'LastEvaluatedKey' not in r:
+                        break
+                    kw['ExclusiveStartKey'] = r['LastEvaluatedKey']
+                return gids
+
+            with _cf.ThreadPoolExecutor(max_workers=_SEGS) as _ex:
+                _sets = list(_ex.map(_scan_seg, range(_SEGS)))
+            _cnt = len(set().union(*_sets))
+            _ddb_ai_target_cache['value'] = _cnt
+            _ddb_ai_target_cache['ts']    = _now
         cards[3]['value'] = f'{_cnt:,}'
         cards[3]['sub']   = 'DynamoDB lifesync_customer_result · AI 분석 완료 고객'
     except Exception:
@@ -2272,20 +2553,28 @@ def api_emr_status():
 @app.route('/api/datavpc/status')
 @login_required
 def api_datavpc_status():
-    """DataVPC 4개 컴포넌트 통합 상태 — S3 / Kinesis / Glue / EMR."""
-    raw_bucket = os.environ.get('LIFESYNC_RAW_S3_BUCKET', 'lifesync-raw')
-    try:
-        _boto('s3').head_bucket(Bucket=raw_bucket)
-        s3_state = 'EXISTS'
-    except Exception:
-        s3_state = 'NOT_FOUND'
+    """DataVPC 컴포넌트 통합 상태 — S3(raw/processed/curated) / Kinesis / Glue / EMR."""
+    def _s3_state(bucket):
+        try:
+            _boto('s3').head_bucket(Bucket=bucket)
+            return 'EXISTS'
+        except Exception:
+            return 'NOT_FOUND'
+
+    raw_bucket  = os.environ.get('LIFESYNC_RAW_S3_BUCKET',       'lifesync-raw')
+    proc_bucket = os.environ.get('LIFESYNC_PROCESSED_S3_BUCKET', 'lifesync-processed')
+    cur_bucket  = os.environ.get('LIFESYNC_CURATED_S3_BUCKET',   'lifesync-curated')
     emr_list = _ping_emr()
     return jsonify({
-        's3_bucket': raw_bucket,
-        's3_state':  s3_state,
-        'kinesis':   _ping_kinesis(),
-        'glue':      _ping_glue_last_run(),
-        'emr':       emr_list[0] if emr_list else {},
+        's3_bucket':      raw_bucket,
+        's3_state':       _s3_state(raw_bucket),
+        's3_proc_bucket': proc_bucket,
+        's3_proc_state':  _s3_state(proc_bucket),
+        's3_cur_bucket':  cur_bucket,
+        's3_cur_state':   _s3_state(cur_bucket),
+        'kinesis':        _ping_kinesis(),
+        'glue':           _ping_glue_last_run(),
+        'emr':            emr_list[0] if emr_list else {},
     })
 
 
@@ -2360,15 +2649,15 @@ def ops():
     """
     wearable_snap = wearable_engine.snapshot()
     # VPC 카드는 JS 폴링 (30s) 으로 _ping_* 결과 채움. SSR 은 빈 카드 + 토폴로지/엔드포인트만 정적
-    topology = MOCKUP_NET_TOPOLOGY                # 토폴로지는 디자인 (인프라 그림) — 정적
-    platform   = dict(MOCKUP_NET_AWS_PLATFORM,    rows=[])
-    data       = dict(MOCKUP_NET_AWS_DATA,        rows=[])
-    gvm        = dict(MOCKUP_NET_AWS_GROUPVM,     rows=[])
-    wearable   = dict(MOCKUP_NET_AWS_WEARABLE,    rows=[])
-    management = dict(MOCKUP_NET_AWS_MANAGEMENT,  rows=[])
-    conn       = dict(MOCKUP_NET_AWS_CONNECTIVITY, rows=[])
-    gcp        = dict(MOCKUP_NET_GCP,    rows=[])
-    onprem     = dict(MOCKUP_NET_ONPREM, rows=[])
+    topology   = _NET_TOPOLOGY
+    platform   = dict(_NET_AWS_PLATFORM,     rows=[])
+    data       = dict(_NET_AWS_DATA,         rows=[])
+    gvm        = dict(_NET_AWS_GROUPVM,      rows=[])
+    wearable   = dict(_NET_AWS_WEARABLE,     rows=[])
+    management = dict(_NET_AWS_MANAGEMENT,   rows=[])
+    conn       = dict(_NET_AWS_CONNECTIVITY, rows=[])
+    gcp        = dict(_NET_GCP,    rows=[])
+    onprem     = dict(_NET_ONPREM, rows=[])
 
     return render_template('ops.html',
         active='ops',
@@ -2427,4 +2716,4 @@ def api_debug_cloud():
 
 if __name__ == '__main__':
     # threaded=True — SSE 장기 연결 + 일반 요청 동시 처리
-    app.run(debug=True, port=5001, threaded=True)
+    app.run(debug=False, port=5001, threaded=True)

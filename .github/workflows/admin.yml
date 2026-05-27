@@ -48,9 +48,7 @@ jobs:
   mirror-to-codecommit:
     needs: test
     runs-on: ubuntu-latest
-    # 19-cicd-service-platform이 GitHub CodeStarSourceConnection으로 직접 source —
-    # CodeCommit mirror 불필요. 19 stack을 CodeCommit 기반으로 되돌리면 if 조건 복원.
-    if: false  # github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -67,7 +65,7 @@ jobs:
         run: |
           git config --global credential.helper '!aws codecommit credential-helper $@'
           git config --global credential.UseHttpPath true
-          git remote add codecommit https://git-codecommit.${{ env.AWS_REGION }}.amazonaws.com/v1/repos/lifesync-lifesync-service-admin
+          git remote add codecommit https://git-codecommit.${{ env.AWS_REGION }}.amazonaws.com/v1/repos/lifesync-admin-platform
           git subtree split --prefix=admin-platform -b _admin-deploy
           git push codecommit _admin-deploy:main --force
           git branch -D _admin-deploy
