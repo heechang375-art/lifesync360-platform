@@ -11,6 +11,9 @@ files:
     destination: C:\admin-platform\static
 file_exists_behavior: OVERWRITE
 hooks:
+  ApplicationStop:
+    - location: scripts\stop_app.ps1
+      timeout: 30
   AfterInstall:
     - location: scripts\after_install.ps1
       timeout: 60
