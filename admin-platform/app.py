@@ -101,7 +101,7 @@ DYNAMO_TABLE         = os.environ.get('DYNAMO_TABLE', 'lifesync_customer_result'
 DDB_SEGMENT_TABLE    = os.environ.get('DDB_SEGMENT_TABLE',    'analytics_segment_performance')
 DDB_DEMOGRAPHIC_TABLE= os.environ.get('DDB_DEMOGRAPHIC_TABLE','analytics_demographic_information')
 AWS_REGION           = os.environ.get('AWS_REGION', 'ap-northeast-2')
-ONPREM_QUERY_LAMBDA  = os.environ.get('ONPREM_QUERY_LAMBDA', '')
+ONPREM_QUERY_LAMBDA  = os.environ.get('ONPREM_QUERY_LAMBDA', 'lifesync-onprem-customer-query')
 ONPREM_BASE_URL      = os.environ.get('ONPREM_BASE_URL', 'http://172.16.1.73')
 
 GRADES = ['VIP', 'GOLD', 'SILVER', 'BASIC', 'CARE']
@@ -232,6 +232,18 @@ def _call_onprem(action, timeout=8, **kwargs):
         'get_identity_map':      (f'/internal/identity_map/{global_id}',     {}),
     }
 
+    if ONPREM_QUERY_LAMBDA:
+        resp   = _get_lambda().invoke(
+            FunctionName=ONPREM_QUERY_LAMBDA,
+            InvocationType='RequestResponse',
+            Payload=_j.dumps({'action': action, **kwargs}),
+        )
+        result = _j.loads(resp['Payload'].read())
+        if result.get('statusCode') != 200:
+            return {}
+        body = result.get('body', '{}')
+        return _j.loads(body) if isinstance(body, str) else body
+
     if ONPREM_BASE_URL and action in _ROUTES:
         path, params = _ROUTES[action]
         qs = ('?' + urllib.parse.urlencode(params)) if params else ''
@@ -242,18 +254,7 @@ def _call_onprem(action, timeout=8, **kwargs):
         except Exception:
             return {}
 
-    if not ONPREM_QUERY_LAMBDA:
-        return {}
-    resp   = _get_lambda().invoke(
-        FunctionName=ONPREM_QUERY_LAMBDA,
-        InvocationType='RequestResponse',
-        Payload=_j.dumps({'action': action, **kwargs}),
-    )
-    result = _j.loads(resp['Payload'].read())
-    if result.get('statusCode') != 200:
-        return {}
-    body = result.get('body', '{}')
-    return _j.loads(body) if isinstance(body, str) else body
+    return {}
 
 
 def _load_consent_from_s3(global_id):
@@ -2245,27 +2246,24 @@ def api_ai_chart_donut():
 
 
 def _ai_age_perf_2step():
-    """연령대별 추천 성과 — On-Prem profile/list-all 페이지네이션, DDB fallback. V6 R21."""
+    """연령대별 추천 성과 — Lambda list_by_age_band 액션 우선, DDB fallback. V6 R21."""
+    import json as _json
     try:
-        if not ONPREM_BASE_URL:
-            raise ValueError("ONPREM_BASE_URL not set")
-        age_groups = {}
-        after = ''
-        for _ in range(10):
-            qs = 'size=500' + (f'&after={after}' if after else '')
-            url = f'{ONPREM_BASE_URL.rstrip("/")}/internal/profile/list-all?{qs}'
-            with urllib.request.urlopen(urllib.request.Request(url), timeout=2) as resp:
-                data = _j.loads(resp.read())
-            for item in data.get('items', []):
-                gid = item.get('global_id')
-                ab  = item.get('age_band')
-                if gid and ab:
-                    age_groups.setdefault(ab, []).append(gid)
-            after = data.get('next_after', '')
-            if not after:
-                break
+        if not ONPREM_QUERY_LAMBDA:
+            raise ValueError("ONPREM_QUERY_LAMBDA not set")
+        resp   = _get_lambda().invoke(
+            FunctionName=ONPREM_QUERY_LAMBDA,
+            InvocationType='RequestResponse',
+            Payload=_json.dumps({'action': 'list_by_age_band'}),
+        )
+        result = _json.loads(resp['Payload'].read())
+        if result.get('statusCode') != 200:
+            raise ValueError(f"Lambda error: {result.get('statusCode')}")
+        body       = result.get('body', '{}')
+        data       = _json.loads(body) if isinstance(body, str) else body
+        age_groups = data.get('age_groups', {})
         if not age_groups:
-            raise ValueError("no age_band data from on-prem")
+            raise ValueError("no age_groups from Lambda")
         out = []
         with get_db() as db, db.cursor() as cur:
             for age_band in ['20s', '30s', '40s', '50s', '60s+']:
