@@ -164,6 +164,24 @@ def _option_label(option_name, category_code=None):
         return cm[category_code]
     return OPTION_LABEL.get(option_name, option_name)
 
+# 옵션 값(영문) → 한글 표시 매핑. 라벨은 _option_label, 값은 여기서 한글화.
+OPTION_VALUE_KO = {
+    # 서비스 채널
+    'CENTER': '센터 방문', 'HYBRID': '센터+앱', 'APP': '앱',
+    # 코칭 주기
+    'DAILY': '매일', 'WEEKLY': '매주', 'BIWEEKLY': '격주', 'MONTHLY': '매월',
+    # 건강데이터 연동
+    'hospital': '병원 연동', 'wearable': '웨어러블 연동',
+    # 변동성
+    'HIGH': '높음', 'MID': '중간', 'LOW': '낮음',
+    # 자산유형
+    'EQUITY': '주식형', 'MIXED': '혼합형', 'REITs': '리츠', 'BOND': '채권', 'COMMODITY': '원자재',
+    # 투자지역
+    'KOREA': '국내', 'US': '미국', 'GLOBAL': '글로벌', 'CHINA': '중국', 'INDIA': '인도', 'EMERGING': '신흥국',
+    # 어드바이저 유형
+    'PB': 'PB(전담)', 'RoboAdvisor': '로보어드바이저', 'Hybrid': '혼합형', 'AI Advisor': 'AI 어드바이저',
+}
+
 def _format_option_value(v):
     s = str(v).strip()
     if s == 'Y': return '예'
@@ -173,7 +191,12 @@ def _format_option_value(v):
             return f"{int(s[:-4].strip()):,}원"
         except ValueError:
             pass
-    return s
+    if s.endswith(' POINT'):
+        try:
+            return f"{int(s[:-6].strip()):,} P"
+        except ValueError:
+            pass
+    return OPTION_VALUE_KO.get(s, s)
 
 
 # ── DB / 인프라 헬퍼 ──────────────────────────────────
