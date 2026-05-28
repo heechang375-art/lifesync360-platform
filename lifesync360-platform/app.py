@@ -182,7 +182,10 @@ OPTION_VALUE_KO = {
     'PB': 'PB(전담)', 'RoboAdvisor': '로보어드바이저', 'Hybrid': '혼합형', 'AI Advisor': 'AI 어드바이저',
 }
 
-def _format_option_value(v):
+# 숫자만 있는 옵션 값에 단위 부착 (옵션명 기준 — 연금개시연령에 개월 붙는 오류 방지)
+OPTION_VALUE_UNIT = {'term_month': '개월', 'pension_start_age': '세'}
+
+def _format_option_value(v, option_name=None):
     s = str(v).strip()
     if s == 'Y': return '예'
     if s == 'N': return '아니오'
@@ -196,6 +199,8 @@ def _format_option_value(v):
             return f"{int(s[:-6].strip()):,} P"
         except ValueError:
             pass
+    if option_name in OPTION_VALUE_UNIT and s.isdigit():
+        return f"{s}{OPTION_VALUE_UNIT[option_name]}"
     return OPTION_VALUE_KO.get(s, s)
 
 
@@ -900,7 +905,7 @@ def product(product_code):
         'desc':     row['description'],
         'tag':      row['risk_level'],
         'detail':   [{'key': _option_label(o['option_name'], row['category_code']),
-                      'value': _format_option_value(o['option_value'])} for o in options],
+                      'value': _format_option_value(o['option_value'], o['option_name'])} for o in options],
         'category': row['company_code'],
     }
     return render_template('product.html', item=item)
