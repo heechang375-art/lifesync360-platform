@@ -576,17 +576,15 @@ def _ping_vpn():
     try:
         ec2  = _boto('ec2')
         conns = [c for c in ec2.describe_vpn_connections().get('VpnConnections', []) if c.get('State') != 'deleted']
+        cgw_ids = list({c['CustomerGatewayId'] for c in conns if c.get('CustomerGatewayId')})
         cgw_cache = {}
+        if cgw_ids:
+            cgws = ec2.describe_customer_gateways(CustomerGatewayIds=cgw_ids).get('CustomerGateways', [])
+            cgw_cache = {g['CustomerGatewayId']: g for g in cgws}
         out = []
         connections = []
         for c in conns:
-            cgw_id = c.get('CustomerGatewayId', '')
-            if cgw_id and cgw_id not in cgw_cache:
-                try:
-                    cgw = ec2.describe_customer_gateways(CustomerGatewayIds=[cgw_id]).get('CustomerGateways', [])
-                    cgw_cache[cgw_id] = cgw[0] if cgw else {}
-                except Exception:
-                    cgw_cache[cgw_id] = {}
+            cgw_id   = c.get('CustomerGatewayId', '')
             cgw_info = cgw_cache.get(cgw_id, {})
             tag_name = next((t['Value'] for t in c.get('Tags', []) if t.get('Key') == 'Name'), '-')
             conn_tunnels = []
