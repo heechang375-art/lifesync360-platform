@@ -162,6 +162,90 @@ Start-Process powershell -ArgumentList '-NonInteractive -WindowStyle Hidden -Fil
 
 ---
 
+## Admin EC2 → Aurora TGW 연결 (2026-05-28)
+
+### 배경
+
+Admin EC2(management-vpc 10.4.20.154)가 Aurora(lifesync-vpc 10.0.21.40)에 연결 안 됨.  
+원인: lifesync-vpc가 TGW에 미연결 + management-private-rt에 10.0.0.0/16 경로 없음.  
+Aurora SG에 `10.4.20.0/24` 인바운드 규칙은 이미 있었음.
+
+### 01-network.yaml에 추가한 리소스 (HasTransitGateway 조건)
+
+| 리소스 | 유형 | 목적 |
+|--------|------|------|
+| `LifeSyncTgwAttachment` | TransitGatewayVpcAttachment | lifesync-vpc → TGW 연결 |
+| `LifeSyncAppPrivateTgwRoute` | Route | lifesync app-private-rt: 10.4.0.0/16 → TGW (리턴 경로) |
+| `LifeSyncDbPrivateTgwRoute` | Route | lifesync db-private-rt: 10.4.0.0/16 → TGW (리턴 경로) |
+| `TgwRouteForLifeSyncVpc` | TransitGatewayRoute | TGW RT: 10.0.0.0/16 → lifesync attachment |
+| `ManagementPrivatePlatformVpcRoute` | Route | management-private-rt: 10.0.0.0/16 → TGW (이미 있음, 파라미터만 채우면 됨) |
+
+### 스택 업데이트 절차
+
+**스택명**: `lifesync-dev-01-network`
+
+```bash
+# S3에 템플릿 업로드
+aws s3 cp Aws_iac/Aws_iac/templates/01-network.yaml \
+  s3://lifesync-cicd-artifact-354/cfn/01-network.yaml
+
+# 스택 업데이트 (파라미터 2개만 변경, 나머지는 기존값 유지)
+aws cloudformation update-stack \
+  --stack-name lifesync-dev-01-network \
+  --template-url https://lifesync-cicd-artifact-354.s3.ap-northeast-2.amazonaws.com/cfn/01-network.yaml \
+  --parameters \
+    ParameterKey=TransitGatewayId,ParameterValue=tgw-01a3e62fab3329872 \
+    ParameterKey=TransitGatewayRouteTableId,ParameterValue=tgw-rtb-0589b81854eb3873f \
+    ParameterKey=ProjectName,UsePreviousValue=true \
+    ParameterKey=Environment,UsePreviousValue=true \
+    ParameterKey=AvailabilityZone,UsePreviousValue=true \
+    ParameterKey=DatabaseAvailabilityZone,UsePreviousValue=true \
+    ParameterKey=LifeSyncVpcCidr,UsePreviousValue=true \
+    ParameterKey=LifeSyncPublicSubnetCidr,UsePreviousValue=true \
+    ParameterKey=LifeSyncPublicSubnetBCidr,UsePreviousValue=true \
+    ParameterKey=LifeSyncAppPrivateSubnetCidr,UsePreviousValue=true \
+    ParameterKey=LifeSyncAppPrivateSubnetBCidr,UsePreviousValue=true \
+    ParameterKey=LifeSyncDbPrivateSubnetACidr,UsePreviousValue=true \
+    ParameterKey=LifeSyncDbPrivateSubnetBCidr,UsePreviousValue=true \
+    ParameterKey=WearableVpcCidr,UsePreviousValue=true \
+    ParameterKey=WearablePublicSubnetCidr,UsePreviousValue=true \
+    ParameterKey=GroupVpcCidr,UsePreviousValue=true \
+    ParameterKey=GroupPublicSubnetCidr,UsePreviousValue=true \
+    ParameterKey=GroupPrivateSubnetCidr,UsePreviousValue=true \
+    ParameterKey=DataVpcCidr,UsePreviousValue=true \
+    ParameterKey=DataGluePrivateSubnetCidr,UsePreviousValue=true \
+    ParameterKey=DataEmrPrivateSubnetCidr,UsePreviousValue=true \
+    ParameterKey=ManagementVpcCidr,UsePreviousValue=true \
+    ParameterKey=ManagementPublicSubnetCidr,UsePreviousValue=true \
+    ParameterKey=ManagementPrivateSubnetCidr,UsePreviousValue=true \
+    ParameterKey=ManagementAdminSubnetCidr,UsePreviousValue=true \
+    ParameterKey=EnableNatGateways,UsePreviousValue=true \
+    ParameterKey=DeployWearableVpc,UsePreviousValue=true \
+  --capabilities CAPABILITY_NAMED_IAM
+```
+
+### 업데이트 후 생성되는 리소스
+
+1. **TGW VPC attachment** — lifesync-vpc가 TGW에 연결됨 (`tgw-attach-xxx`)
+2. **TGW route** — `10.0.0.0/16 → lifesync attachment` (TGW RT에 추가)
+3. **management-private-rt route** — `10.0.0.0/16 → TGW` (admin EC2 서브넷)
+4. **lifesync app-private-rt route** — `10.4.0.0/16 → TGW` (ECS → admin 방향)
+5. **lifesync db-private-rt route** — `10.4.0.0/16 → TGW` (Aurora → admin 리턴)
+
+### 업데이트 후 검증
+
+```bash
+# admin EC2에서 Aurora 3306 연결 확인
+aws ssm send-command \
+  --instance-ids i-0c3668c5dbbb5262b \
+  --document-name AWS-RunPowerShellScript \
+  --parameters 'commands=["Test-NetConnection -ComputerName auroracluster-db.cluster-cghecq7cbwln.ap-northeast-2.rds.amazonaws.com -Port 3306 -InformationLevel Quiet"]'
+
+# 예상 결과: True
+```
+
+---
+
 ## 온프레미스 구축 Runbook
 
 처음부터 다시 구성할 때 이 순서대로 실행.
