@@ -185,6 +185,7 @@ def get_db():
         password=os.environ.get('DB_PASS', 'ChangeMe123!'),
         database=os.environ.get('DB_NAME', 'lifesync360'),
         cursorclass=pymysql.cursors.DictCursor,
+        connect_timeout=5,
     )
 
 
@@ -934,8 +935,10 @@ def _stub_bigquery_analytics(query_kind='recommendation_mart'):
 
 _redis_client = None
 
-_ddb_ai_target_cache = {'value': None, 'ts': 0.0}
-_DDB_AI_TARGET_TTL   = 300  # 5분 — 배치가 하루 1회라 충분
+_ddb_ai_target_cache  = {'value': None, 'ts': 0.0}
+_DDB_AI_TARGET_TTL    = 300
+_aurora_ctr_cvr_cache = {'value': None, 'ts': 0.0}
+_AURORA_CTR_CVR_TTL   = 300
 
 _redis_rec_cache = {'value': None, 'ts': 0.0}
 _REDIS_REC_TTL   = 300  # 5분
@@ -2117,20 +2120,35 @@ def _ai_kpi4_from_aws():
     # 안 들어오는 항목은 '-' 로 비워둠
     cards = [dict(c, value='-', sub='-') for c in _AI_KPI4_CARDS]
     try:
-        with get_db() as _db, _db.cursor() as _cur:
-            _cur.execute(
-                "SELECT CURDATE() AS date, "
-                "  ROUND(SUM(clicked_flag IN ('Y','1')) * 100.0 / COUNT(*), 1) AS ctr, "
-                "  ROUND(SUM(purchased_flag IN ('Y','1')) * 100.0 / COUNT(*), 1) AS cvr "
-                "FROM customer_recommend_history "
-                "WHERE recommended_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)"
-            )
-            _row = _cur.fetchone()
-            if _row and _row.get('ctr') is not None:
-                cards[0]['value'] = f"{float(_row['ctr'] or 0):.1f}%"
-                cards[0]['sub']   = f"최근 7일 평균 · customer_recommend_history · {_row['date']}"
-                cards[1]['value'] = f"{float(_row['cvr'] or 0):.1f}%"
-                cards[1]['sub']   = f"최근 7일 평균 · customer_recommend_history · {_row['date']}"
+        import time as _time
+        _now = _time.time()
+        if _aurora_ctr_cvr_cache['value'] is not None and _now - _aurora_ctr_cvr_cache['ts'] < _AURORA_CTR_CVR_TTL:
+            _cached = _aurora_ctr_cvr_cache['value']
+            cards[0]['value'] = _cached['ctr']
+            cards[0]['sub']   = _cached['sub0']
+            cards[1]['value'] = _cached['cvr']
+            cards[1]['sub']   = _cached['sub1']
+        else:
+            with get_db() as _db, _db.cursor() as _cur:
+                _cur.execute(
+                    "SELECT CURDATE() AS date, "
+                    "  ROUND(SUM(clicked_flag IN ('Y','1')) * 100.0 / COUNT(*), 1) AS ctr, "
+                    "  ROUND(SUM(purchased_flag IN ('Y','1')) * 100.0 / COUNT(*), 1) AS cvr "
+                    "FROM customer_recommend_history "
+                    "WHERE recommended_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)"
+                )
+                _row = _cur.fetchone()
+                if _row and _row.get('ctr') is not None:
+                    _v0 = f"{float(_row['ctr'] or 0):.1f}%"
+                    _s0 = f"최근 7일 평균 · customer_recommend_history · {_row['date']}"
+                    _v1 = f"{float(_row['cvr'] or 0):.1f}%"
+                    _s1 = f"최근 7일 평균 · customer_recommend_history · {_row['date']}"
+                    _aurora_ctr_cvr_cache['value'] = {'ctr': _v0, 'sub0': _s0, 'cvr': _v1, 'sub1': _s1}
+                    _aurora_ctr_cvr_cache['ts'] = _now
+                    cards[0]['value'] = _v0
+                    cards[0]['sub']   = _s0
+                    cards[1]['value'] = _v1
+                    cards[1]['sub']   = _s1
     except Exception:
         pass
     try:
