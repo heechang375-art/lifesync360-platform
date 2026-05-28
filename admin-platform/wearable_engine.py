@@ -164,13 +164,7 @@ def _load_from_kinesis() -> bool:
 
 
 def load_initial(path):
-    """Kinesis TRIM_HORIZON 시도 → 빈 스트림이면 mock 파일 fallback."""
-    if _load_from_kinesis():
-        with _lock:
-            _state['registered']   = len(_state['latest'])
-            _state['active_count'] = len(_state['latest'])
-        return
-
+    """초기 디바이스 데이터 파일 로드. Kinesis 실데이터는 start_loop() → tick() 에서 수신."""
     with open(path, encoding='utf-8') as f:
         batch = json.load(f)
     with _lock:
@@ -250,7 +244,7 @@ def snapshot():
             red, yellow = classify(r)
             if red:    red_n    += 1
             if yellow: yellow_n += 1
-        send_rate = (active * 100 // registered) if registered else 0
+        send_rate = round(active * 100.0 / registered, 1) if registered else 0
         return {
             'kpi': [
                 {'label': '활성 디바이스',   'value': f'{active}',  'sub': f'/ 등록 {registered} · 최근 1초', 'accent': '#3b82f6'},
@@ -266,6 +260,22 @@ def snapshot():
 # ── 백그라운드 루프 ────────────────────────────────────────
 _loop_started = False
 
+def _init_kinesis_latest():
+    """Kinesis LATEST iterator 초기화 — TRIM_HORIZON 없이 빠르게."""
+    try:
+        client = boto3.client('kinesis', region_name=_REGION)
+        it = client.get_shard_iterator(
+            StreamName=_STREAM_NAME,
+            ShardId=_SHARD_ID,
+            ShardIteratorType='LATEST',
+        )['ShardIterator']
+        _kin_state['client']   = client
+        _kin_state['iterator'] = it
+        _kin_state['enabled']  = True
+    except Exception:
+        pass
+
+
 def start_loop(interval=1.0):
     global _loop_started
     if _loop_started:
@@ -273,6 +283,7 @@ def start_loop(interval=1.0):
     _loop_started = True
 
     def _run():
+        _init_kinesis_latest()
         while True:
             try:
                 tick()
