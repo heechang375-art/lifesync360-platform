@@ -1370,8 +1370,9 @@ def users():
     )
 
     # ① consent gate
-    consent_gate   = 'ok'
-    consent_badges = []
+    consent_gate    = 'ok'
+    consent_badges  = []
+    consent_domains = []   # 동의한 계열사 company_code 목록
     try:
         consent    = (_call_onprem('get_consent', global_id=q) or {})
         ls_user_id = consent.get('ls_user_id') or ''
@@ -1387,8 +1388,10 @@ def users():
             if not active:
                 consent_gate = 'not_consented'
             else:
-                consent_badges = [domain_label.get(c.get('domain'), c.get('domain', c.get('key', '?')))
-                                  for c in active]
+                consent_badges  = [domain_label.get(c.get('domain'), c.get('domain', c.get('key', '?')))
+                                   for c in active]
+                consent_domains = [c.get('domain') or c.get('key', '') for c in active
+                                   if c.get('domain') or c.get('key')]
     except Exception:
         consent_gate = 'not_registered'
 
@@ -1464,13 +1467,24 @@ def users():
     except Exception:
         pass
 
-    # ④ 교차판매 (cross_sell_rule)
+    # ④ 교차판매 (cross_sell_rule) — 동의 계열사 상품만
     crosssell = []
+    if consent_domains:
+        _cd_fmt = ','.join(['%s'] * len(consent_domains))
+        _company_filter = (
+            f'AND p.company_id IN '
+            f'(SELECT company_id FROM company_master WHERE company_code IN ({_cd_fmt}))'
+        )
+        _cd_params = tuple(consent_domains)
+    else:
+        _company_filter = ''
+        _cd_params = ()
     _CS_SQL = (
         'SELECT r.target_category, '
         '(SELECT p.product_name FROM product_master p '
         ' JOIN category_master c2 ON p.category_id = c2.category_id '
         ' WHERE c2.category_code = r.target_category AND p.active_flag = "Y" '
+        f' {_company_filter}'
         ' ORDER BY p.priority_rank ASC LIMIT 1) AS product_name, '
         '(SELECT c3.category_name FROM category_master c3 WHERE c3.category_code = r.target_category LIMIT 1) AS category_name '
         'FROM cross_sell_rule r WHERE r.active_flag = "Y" '
@@ -1487,14 +1501,17 @@ def users():
         try:
             with _db.cursor() as _cur:
                 # 구매 이력 기반 우선 시도
-                _cur.execute(_CS_SQL.format(flag_filter="AND h.purchased_flag IN ('Y', '1')"), (q,))
+                _cur.execute(
+                    _CS_SQL.format(flag_filter="AND h.purchased_flag IN ('Y', '1')"),
+                    _cd_params + (q,)
+                )
                 for row in _cur.fetchall():
                     if row['product_name']:
                         crosssell.append({'product': row['product_name'], 'category': row['target_category'],
                                           'reason': f'{row["category_name"] or row["target_category"]} 교차 추천 룰'})
                 # 구매 이력 없으면 추천 이력(전체) 기반 fallback
                 if not crosssell:
-                    _cur.execute(_CS_SQL.format(flag_filter=''), (q,))
+                    _cur.execute(_CS_SQL.format(flag_filter=''), _cd_params + (q,))
                     for row in _cur.fetchall():
                         if row['product_name']:
                             crosssell.append({'product': row['product_name'], 'category': row['target_category'],
