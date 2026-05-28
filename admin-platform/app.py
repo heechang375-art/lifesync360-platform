@@ -1494,7 +1494,7 @@ def users():
         '    JOIN category_master cat ON p.category_id = cat.category_id '
         '    WHERE h.global_id = %s {flag_filter}'
         '  ) '
-        'ORDER BY r.priority_rank ASC LIMIT 3'
+        'ORDER BY r.priority_rank ASC LIMIT 49'
     )
     try:
         _db = get_db()
@@ -1506,14 +1506,14 @@ def users():
                     _cd_params + (q,)
                 )
                 for row in _cur.fetchall():
-                    if row['product_name']:
+                    if row['product_name'] and len(crosssell) < 3:
                         crosssell.append({'product': row['product_name'], 'category': row['target_category'],
                                           'reason': f'{row["category_name"] or row["target_category"]} 교차 추천 룰'})
                 # 구매 이력 없으면 추천 이력(전체) 기반 fallback
                 if not crosssell:
                     _cur.execute(_CS_SQL.format(flag_filter=''), _cd_params + (q,))
                     for row in _cur.fetchall():
-                        if row['product_name']:
+                        if row['product_name'] and len(crosssell) < 3:
                             crosssell.append({'product': row['product_name'], 'category': row['target_category'],
                                               'reason': f'{row["category_name"] or row["target_category"]} 추천 이력 기반 룰'})
         finally:
