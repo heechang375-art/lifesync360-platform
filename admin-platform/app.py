@@ -2500,6 +2500,88 @@ def api_network_vpn():
     return jsonify(_ping_vpn())
 
 
+def _ping_ecs_services():
+    """ECS 클러스터 내 서비스 목록 + CloudWatch CPU/메모리 사용률 조회.
+
+    AWS/ECS 네임스페이스 — CloudWatch Agent 없이 자동 수집.
+    실패 시 빈 list 반환.
+    """
+    from datetime import datetime, timezone, timedelta
+    try:
+        ecs = _boto('ecs')
+        cluster_arns = ecs.list_clusters().get('clusterArns', [])
+        if not cluster_arns:
+            return []
+
+        services = []
+        for cluster_arn in cluster_arns:
+            cluster_name = cluster_arn.split('/')[-1]
+            svc_arns = ecs.list_services(cluster=cluster_arn).get('serviceArns', [])
+            if not svc_arns:
+                continue
+            descs = ecs.describe_services(cluster=cluster_arn, services=svc_arns).get('services', [])
+            for svc in descs:
+                services.append({
+                    'cluster':  cluster_name,
+                    'name':     svc['serviceName'],
+                    'status':   svc['status'],
+                    'running':  svc['runningCount'],
+                    'desired':  svc['desiredCount'],
+                    'cpu_pct':  None,
+                    'mem_pct':  None,
+                })
+
+        if not services:
+            return services
+
+        cw    = _boto('cloudwatch')
+        now   = datetime.now(timezone.utc)
+        start = now - timedelta(minutes=15)
+        queries = []
+        for i, s in enumerate(services):
+            dims = [
+                {'Name': 'ClusterName', 'Value': s['cluster']},
+                {'Name': 'ServiceName', 'Value': s['name']},
+            ]
+            queries.append({
+                'Id': f'cpu{i}',
+                'MetricStat': {
+                    'Metric': {'Namespace': 'AWS/ECS', 'MetricName': 'CPUUtilization', 'Dimensions': dims},
+                    'Period': 300, 'Stat': 'Average',
+                },
+                'ReturnData': True,
+            })
+            queries.append({
+                'Id': f'mem{i}',
+                'MetricStat': {
+                    'Metric': {'Namespace': 'AWS/ECS', 'MetricName': 'MemoryUtilization', 'Dimensions': dims},
+                    'Period': 300, 'Stat': 'Average',
+                },
+                'ReturnData': True,
+            })
+
+        res   = cw.get_metric_data(MetricDataQueries=queries, StartTime=start, EndTime=now)
+        by_id = {m['Id']: m.get('Values') or [] for m in res.get('MetricDataResults', [])}
+        for i, s in enumerate(services):
+            cpu_vals = by_id.get(f'cpu{i}', [])
+            mem_vals = by_id.get(f'mem{i}', [])
+            if cpu_vals:
+                s['cpu_pct'] = round(cpu_vals[0], 1)
+            if mem_vals:
+                s['mem_pct'] = round(mem_vals[0], 1)
+
+        return services
+    except Exception:
+        return []
+
+
+@app.route('/api/ecs/status')
+@login_required
+def api_ecs_status():
+    """ECS 서비스 목록 + CPU/메모리 사용률."""
+    return jsonify(_ping_ecs_services())
+
+
 @app.route('/api/vm/platform')
 @login_required
 def api_vm_platform():

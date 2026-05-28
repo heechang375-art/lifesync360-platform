@@ -31,7 +31,21 @@
 <section class="section">
     <div class="section-title">📦 AWS VPC <span class="pipe">|</span> <span class="sub">Platform · Wearable · Data · Group VM · Management</span><span class="ts" id="ts-ops-vpc">갱신: --:--:--</span></div>
     <div class="grid grid-5">
-        {{ vpc_card(net_platform, 'pf') }}
+        <div class="card">
+            <div class="card-title">📦 {{ net_platform.title }}</div>
+            <div id="ops-rows-pf">
+            {% for it in net_platform.rows %}
+            <div class="vpc-item">
+                <div>
+                    <div class="vpc-item-name">{{ it.name }}</div>
+                    <div class="vpc-item-sub">{{ it.sub }}</div>
+                </div>
+                {% if it.state %}<span class="vpc-item-state" style="background:#dcfce7; color:{{ it.state_color }};">● {{ it.state }}</span>{% endif %}
+            </div>
+            {% endfor %}
+            </div>
+            <div id="ops-rows-ecs"></div>
+        </div>
         {{ vpc_card(net_wearable, 'we') }}
         {{ vpc_card(net_data, 'dt') }}
         {{ vpc_card(net_groupvm, 'gvm') }}
@@ -191,7 +205,7 @@ window.addEventListener('DOMContentLoaded', function () {
                     renderConn();
                 },
             },
-            // Platform VPC: admin EC2 + ECS
+            // Platform VPC: admin EC2
             {
                 url: '/api/vm/platform',
                 apply: function (data) {
@@ -200,15 +214,32 @@ window.addEventListener('DOMContentLoaded', function () {
                         var st = (i.state || '').toLowerCase();
                         var color = st === 'running' ? '#16a34a' : (st === 'stopped' ? '#dc2626' : '#94a3b8');
                         var cpu = i.cpu_pct != null ? 'CPU ' + i.cpu_pct + '%' : '';
-                        var mem = i.mem_pct != null ? ' · MEM ' + i.mem_pct + '%' : '';
-                        var sub = (i.vm_id || '-') + (cpu ? ' · ' + cpu + mem : '');
-                        return { name: i.name || i.vm_id || '-', sub: sub, state: i.state || '-', state_color: color };
+                        var mem = i.mem_pct != null ? ' MEM ' + i.mem_pct + '%' : '';
+                        var sub = cpu ? cpu + (mem ? ' ·' + mem : '') : '-';
+                        return { name: i.name || '-', sub: sub, state: i.state || '-', state_color: color };
                     });
                     AutoRefresh.replaceTbody('ops-rows-pf', vpcRowsHtml(rows));
                     AutoRefresh.stampNow('ts-ops-vpc');
                 },
             },
-            // GroupVM: EC2 7개 list
+            // Platform VPC: ECS 서비스
+            {
+                url: '/api/ecs/status',
+                apply: function (data) {
+                    if (!Array.isArray(data)) return;
+                    var rows = data.map(function (s) {
+                        var ok    = s.running > 0 && s.running === s.desired;
+                        var color = ok ? '#16a34a' : (s.running === 0 ? '#dc2626' : '#d97706');
+                        var cpu   = s.cpu_pct != null ? 'CPU ' + s.cpu_pct + '%' : '';
+                        var mem   = s.mem_pct != null ? ' MEM ' + s.mem_pct + '%' : '';
+                        var sub   = cpu ? cpu + (mem ? ' ·' + mem : '') : '-';
+                        return { name: s.name || '-', sub: sub, state: s.running + '/' + s.desired, state_color: color };
+                    });
+                    AutoRefresh.replaceTbody('ops-rows-ecs', vpcRowsHtml(rows));
+                    AutoRefresh.stampNow('ts-ops-vpc');
+                },
+            },
+            // GroupVM: EC2 list
             {
                 url: '/api/vm/group',
                 apply: function (data) {
@@ -217,10 +248,10 @@ window.addEventListener('DOMContentLoaded', function () {
                         var st = (i.state || '').toLowerCase();
                         var color = st === 'running' ? '#16a34a' : (st === 'stopped' ? '#dc2626' : '#94a3b8');
                         var cpu = i.cpu_pct != null ? 'CPU ' + i.cpu_pct + '%' : '';
-                        var mem = i.mem_pct != null ? ' · MEM ' + i.mem_pct + '%' : '';
-                        var sub = (i.vm_id || '-') + (cpu ? ' · ' + cpu + mem : '');
+                        var mem = i.mem_pct != null ? ' MEM ' + i.mem_pct + '%' : '';
+                        var sub = cpu ? cpu + (mem ? ' ·' + mem : '') : '-';
                         return {
-                            name:        i.name || i.vm_id || '-',
+                            name:        i.name || '-',
                             sub:         sub,
                             state:       i.state || '-',
                             state_color: color,
@@ -238,8 +269,8 @@ window.addEventListener('DOMContentLoaded', function () {
                     var rows = (data.instances || []).map(function (i) {
                         var st = (i.state || '').toLowerCase();
                         var color = st === 'running' ? '#16a34a' : (st === 'stopped' ? '#dc2626' : '#94a3b8');
-                        var sub = (i.vm_id || '-');
-                        return { name: i.name || i.vm_id || '-', sub: sub, state: i.state || '-', state_color: color };
+                        var sub = '-';
+                        return { name: i.name || '-', sub: sub, state: i.state || '-', state_color: color };
                     });
                     // Kinesis 정보는 datavpc/status 에서 가져오므로 여기선 EC2만 표시
                     AutoRefresh.replaceTbody('ops-rows-we', vpcRowsHtml(rows));
@@ -254,8 +285,10 @@ window.addEventListener('DOMContentLoaded', function () {
                     var rows = data.map(function (i) {
                         var st = (i.state || '').toLowerCase();
                         var color = st === 'running' ? '#16a34a' : (st === 'stopped' ? '#dc2626' : '#94a3b8');
-                        var sub = (i.vm_id || '-');
-                        return { name: i.name || i.vm_id || '-', sub: sub, state: i.state || '-', state_color: color };
+                        var cpu = i.cpu_pct != null ? 'CPU ' + i.cpu_pct + '%' : '';
+                        var mem = i.mem_pct != null ? ' MEM ' + i.mem_pct + '%' : '';
+                        var sub = cpu ? cpu + (mem ? ' ·' + mem : '') : '-';
+                        return { name: i.name || '-', sub: sub, state: i.state || '-', state_color: color };
                     });
                     AutoRefresh.replaceTbody('ops-rows-mgmt', vpcRowsHtml(rows));
                     AutoRefresh.stampNow('ts-ops-vpc');
