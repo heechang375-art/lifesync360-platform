@@ -29,6 +29,8 @@ _state = {
     'active_count': 0,
     'registered':   0,
 }
+_recent_senders: deque = deque()  # (timestamp, global_id) — 5분 rolling window
+_ACTIVE_WINDOW = 300              # 5분
 
 
 # ── PII 마스킹 — admin 도 풀네임/풀 ID 안 보이게 ─────────────────
@@ -199,8 +201,10 @@ def _tick_kinesis() -> bool:
                         _record_event(r)
                         active.append(r['global_id'])
             if active:
-                _state['active_count'] = len(active)
-                _state['registered']   = max(_state['registered'], len(_state['latest']))
+                now = time.time()
+                for gid in active:
+                    _recent_senders.append((now, gid))
+                _state['registered'] = max(_state['registered'], len(_state['latest']))
         return True
     except Exception:
         _kin_state['iterator'] = None  # iterator 만료 시 초기화
@@ -238,17 +242,21 @@ def snapshot():
     """KPI 4 + RED/YELLOW 표 데이터 — SSE/JSON 응답용."""
     with _lock:
         registered = _state['registered']
-        active     = _state['active_count']
         red_n, yellow_n = 0, 0
         for r in _state['latest'].values():
             red, yellow = classify(r)
             if red:    red_n    += 1
             if yellow: yellow_n += 1
-        send_rate = round(active * 100.0 / registered, 1) if registered else 0
+    cutoff = time.time() - _ACTIVE_WINDOW
+    while _recent_senders and _recent_senders[0][0] < cutoff:
+        _recent_senders.popleft()
+    active = len({gid for _, gid in _recent_senders})
+    send_rate = round(active * 100.0 / registered, 1) if registered else 0
+    with _lock:
         return {
             'kpi': [
-                {'label': '활성 디바이스',   'value': f'{active}',  'sub': f'/ 등록 {registered} · 최근 1초', 'accent': '#3b82f6'},
-                {'label': '송신율',         'value': f'{send_rate}%', 'sub': '활성 / 등록',                  'accent': '#16a34a'},
+                {'label': '활성 디바이스',   'value': f'{active}',  'sub': f'/ 등록 {registered} · 최근 5분', 'accent': '#3b82f6'},
+                {'label': '송신율',         'value': f'{send_rate}%', 'sub': '5분 내 송신 디바이스 / 등록',   'accent': '#16a34a'},
                 {'label': '🔴 건강 RED',    'value': str(red_n),    'sub': 'AHA/WHO 임상 임계',             'accent': '#dc2626'},
                 {'label': '🟡 건강 YELLOW', 'value': str(yellow_n), 'sub': '경계 영역 — 모니터링',           'accent': '#f59e0b'},
             ],
