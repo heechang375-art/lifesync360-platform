@@ -171,9 +171,9 @@ _NET_ONPREM           = {'title': '온프레미스 (VirtualBox)', 'badge': 'Loca
 _wearable_batch_path = os.path.join(os.path.dirname(__file__), 'mock_wearable_batch.json')
 try:
     wearable_engine.load_initial(_wearable_batch_path)
-    wearable_engine.start_loop(interval=1.0)
 except FileNotFoundError:
     pass   # 운영 단계에선 Kinesis consumer 로 교체 예정 — 파일 없어도 admin 부팅 OK
+wearable_engine.start_loop(interval=1.0)
 
 
 # ── DB / DynamoDB 헬퍼 ────────────────────────────────
@@ -2244,11 +2244,30 @@ def api_ai_chart_donut():
 
 
 def _ai_age_perf_2step():
-    """연령대별 추천 성과 — Lambda list_by_age_band 액션 우선, DDB fallback. V6 R21."""
-    import json as _json
+    """연령대별 추천 성과 — DDB analytics_segment_performance age_band 데이터 (백그라운드 갱신)."""
     try:
-        if not ONPREM_QUERY_LAMBDA:
-            raise ValueError("ONPREM_QUERY_LAMBDA not set")
+        rows = _ddb_query_today(DDB_SEGMENT_TABLE, sk_prefix='age_band#')
+        if not rows:
+            return []
+        order = ['20s', '30s', '40s', '50s', '60s+']
+        return sorted([{
+            'age_band':    str(r.get('value', '-')),
+            'recommended': int(r.get('recommended') or 0),
+            'clicked':     int(r.get('clicked') or 0),
+            'purchased':   int(r.get('purchased') or 0),
+            'ctr':         float(r.get('ctr') or 0),
+            'cvr':         float(r.get('cvr') or 0),
+        } for r in rows], key=lambda x: order.index(x['age_band']) if x['age_band'] in order else 99)
+    except Exception:
+        return []
+
+
+def _refresh_age_perf_to_ddb():
+    """Lambda list_by_age_band → Aurora IN 조회 → DDB analytics_segment_performance age_band 갱신."""
+    import json as _json
+    from decimal import Decimal
+    from datetime import date as _date
+    try:
         resp   = _get_lambda().invoke(
             FunctionName=ONPREM_QUERY_LAMBDA,
             InvocationType='RequestResponse',
@@ -2256,61 +2275,63 @@ def _ai_age_perf_2step():
         )
         result = _json.loads(resp['Payload'].read())
         if result.get('statusCode') != 200:
-            raise ValueError(f"Lambda error: {result.get('statusCode')}")
+            return
         body       = result.get('body', '{}')
         data       = _json.loads(body) if isinstance(body, str) else body
         age_groups = data.get('age_groups', {})
         if not age_groups:
-            raise ValueError("no age_groups from Lambda")
-        out = []
+            return
+    except Exception:
+        return
+    today     = _date.today().isoformat()
+    ddb_table = boto3.resource('dynamodb', region_name=AWS_REGION).Table(DDB_SEGMENT_TABLE)
+    try:
         with get_db() as db, db.cursor() as cur:
             for age_band in ['20s', '30s', '40s', '50s', '60s+']:
                 gids = age_groups.get(age_band, [])
                 if not gids:
-                    out.append({'age_band': age_band, 'recommended': 0,
-                                'clicked': 0, 'purchased': 0, 'ctr': 0, 'cvr': 0})
-                    continue
-                placeholders = ','.join(['%s'] * len(gids))
-                cur.execute(
-                    f"SELECT COUNT(*) AS recommended, "
-                    f"       SUM(clicked_flag IN ('Y','1')) AS clicked, "
-                    f"       SUM(purchased_flag IN ('Y','1')) AS purchased "
-                    f"FROM customer_recommend_history "
-                    f"WHERE global_id IN ({placeholders}) "
-                    f"  AND recommended_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)",
-                    tuple(gids)
-                )
-                row = cur.fetchone() or {}
-                rec = int(row.get('recommended') or 0)
-                clk = int(row.get('clicked') or 0)
-                pur = int(row.get('purchased') or 0)
-                out.append({
-                    'age_band': age_band, 'recommended': rec, 'clicked': clk, 'purchased': pur,
-                    'ctr': round(clk * 100.0 / rec, 1) if rec else 0,
-                    'cvr': round(pur * 100.0 / rec, 1) if rec else 0,
+                    rec, clk, pur = 0, 0, 0
+                else:
+                    placeholders = ','.join(['%s'] * len(gids))
+                    cur.execute(
+                        f"SELECT COUNT(*) AS recommended, "
+                        f"       SUM(clicked_flag IN ('Y','1')) AS clicked, "
+                        f"       SUM(purchased_flag IN ('Y','1')) AS purchased "
+                        f"FROM customer_recommend_history "
+                        f"WHERE global_id IN ({placeholders}) "
+                        f"  AND recommended_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)",
+                        tuple(gids)
+                    )
+                    row = cur.fetchone() or {}
+                    rec = int(row.get('recommended') or 0)
+                    clk = int(row.get('clicked') or 0)
+                    pur = int(row.get('purchased') or 0)
+                ddb_table.put_item(Item={
+                    'snapshot_date': today,
+                    'segment_key':   f'age_band#{age_band}',
+                    'value':         age_band,
+                    'recommended':   rec,
+                    'clicked':       clk,
+                    'purchased':     pur,
+                    'ctr':           Decimal(str(round(clk * 100.0 / rec, 1) if rec else 0)),
+                    'cvr':           Decimal(str(round(pur * 100.0 / rec, 1) if rec else 0)),
+                    'refreshed_at':  datetime.now(timezone.utc).isoformat(),
                 })
-        return out
     except Exception:
         pass
-    # On-Prem 미연결 → DDB analytics_segment_performance age_band 데이터로 대체
-    try:
-        rows = _ddb_query_today(DDB_SEGMENT_TABLE, sk_prefix='age_band#')
-        if not rows:
-            return []
-        order = ['20s', '30s', '40s', '50s', '60s+']
-        out = []
-        for row in sorted(rows, key=lambda r: order.index(r.get('value', '20s')) if r.get('value') in order else 99):
-            out.append({
-                'age_band':    str(row.get('value', '-')),
-                'recommended': int(row.get('recommended') or 0),
-                'clicked':     int(row.get('clicked') or 0),
-                'purchased':   int(row.get('purchased') or 0),
-                'ctr':         float(row.get('ctr') or 0),
-                'cvr':         float(row.get('cvr') or 0),
-            })
-        return out
-    except Exception:
-        return []
+
+
+def _start_age_perf_refresh():
+    import threading
+    def _loop():
+        _refresh_age_perf_to_ddb()
+        while True:
+            time.sleep(300)
+            try:
+                _refresh_age_perf_to_ddb()
+            except Exception:
+                pass
+    threading.Thread(target=_loop, daemon=True, name='age-perf-refresh').start()
 
 
 def _ddb_feature_importance():
@@ -2792,6 +2813,8 @@ def api_debug_cloud():
     out['boto_clients_keys'] = list(_boto_clients.keys())
     return jsonify(out)
 
+
+_start_age_perf_refresh()
 
 if __name__ == '__main__':
     # threaded=True — SSE 장기 연결 + 일반 요청 동시 처리
