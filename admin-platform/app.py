@@ -2818,4 +2818,4 @@ _start_age_perf_refresh()
 
 if __name__ == '__main__':
     # threaded=True — SSE 장기 연결 + 일반 요청 동시 처리
-    app.run(debug=True, port=5001, threaded=True)
+    app.run(debug=True, port=5001, threaded=True, use_reloader=False)
