@@ -1466,39 +1466,39 @@ def users():
 
     # ④ 교차판매 (cross_sell_rule)
     crosssell = []
+    _CS_SQL = (
+        'SELECT r.target_category, '
+        '(SELECT p.product_name FROM product_master p '
+        ' JOIN category_master c2 ON p.category_id = c2.category_id '
+        ' WHERE c2.category_code = r.target_category AND p.active_flag = "Y" '
+        ' ORDER BY p.priority_rank ASC LIMIT 1) AS product_name, '
+        '(SELECT c3.category_name FROM category_master c3 WHERE c3.category_code = r.target_category LIMIT 1) AS category_name '
+        'FROM cross_sell_rule r WHERE r.active_flag = "Y" '
+        '  AND r.base_category IN ('
+        '    SELECT cat.category_code FROM customer_recommend_history h '
+        '    JOIN product_master p ON h.product_id = p.product_id '
+        '    JOIN category_master cat ON p.category_id = cat.category_id '
+        '    WHERE h.global_id = %s {flag_filter}'
+        '  ) '
+        'ORDER BY r.priority_rank ASC LIMIT 3'
+    )
     try:
         _db = get_db()
         try:
             with _db.cursor() as _cur:
-                _cs_grade = (profile.get('grade') or '').strip()
-                if _cs_grade and _cs_grade != '-':
-                    _cs_grade_sql = 'AND p.target_grade = %s '
-                    _cs_params = (_cs_grade, q)
-                else:
-                    _cs_grade_sql = ''
-                    _cs_params = (q,)
-                _cur.execute(
-                    'SELECT r.target_category, '
-                    '(SELECT p.product_name FROM product_master p '
-                    ' JOIN category_master c2 ON p.category_id = c2.category_id '
-                    ' WHERE c2.category_code = r.target_category AND p.active_flag = "Y" '
-                    + _cs_grade_sql +
-                    ' ORDER BY p.priority_rank ASC LIMIT 1) AS product_name, '
-                    '(SELECT c3.category_name FROM category_master c3 WHERE c3.category_code = r.target_category LIMIT 1) AS category_name '
-                    'FROM cross_sell_rule r WHERE r.active_flag = "Y" '
-                    '  AND r.base_category IN ('
-                    '    SELECT cat.category_code FROM customer_recommend_history h '
-                    '    JOIN product_master p ON h.product_id = p.product_id '
-                    '    JOIN category_master cat ON p.category_id = cat.category_id '
-                    '    WHERE h.global_id = %s AND h.purchased_flag IN (\'Y\', \'1\')'
-                    '  ) '
-                    'ORDER BY r.priority_rank ASC LIMIT 3',
-                    _cs_params
-                )
+                # 구매 이력 기반 우선 시도
+                _cur.execute(_CS_SQL.format(flag_filter="AND h.purchased_flag IN ('Y', '1')"), (q,))
                 for row in _cur.fetchall():
                     if row['product_name']:
                         crosssell.append({'product': row['product_name'], 'category': row['target_category'],
                                           'reason': f'{row["category_name"] or row["target_category"]} 교차 추천 룰'})
+                # 구매 이력 없으면 추천 이력(전체) 기반 fallback
+                if not crosssell:
+                    _cur.execute(_CS_SQL.format(flag_filter=''), (q,))
+                    for row in _cur.fetchall():
+                        if row['product_name']:
+                            crosssell.append({'product': row['product_name'], 'category': row['target_category'],
+                                              'reason': f'{row["category_name"] or row["target_category"]} 추천 이력 기반 룰'})
         finally:
             _db.close()
     except Exception:
