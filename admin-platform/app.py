@@ -2145,32 +2145,15 @@ def _ai_kpi4_from_aws():
     except Exception:
         pass
     try:
-        import time as _time, concurrent.futures as _cf
+        import time as _time
         _now = _time.time()
         if _ddb_ai_target_cache['value'] is not None and _now - _ddb_ai_target_cache['ts'] < _DDB_AI_TARGET_TTL:
             _cnt = _ddb_ai_target_cache['value']
         else:
             _ddb_c = boto3.client('dynamodb', region_name=AWS_REGION)
-            _SEGS  = 4
-
-            def _scan_seg(seg):
-                gids, kw = set(), {
-                    'TableName': 'lifesync_customer_result',
-                    'ProjectionExpression': 'global_id',
-                    'Segment': seg, 'TotalSegments': _SEGS,
-                }
-                while True:
-                    r = _ddb_c.scan(**kw)
-                    for it in r.get('Items', []):
-                        gids.add(it['global_id']['S'])
-                    if 'LastEvaluatedKey' not in r:
-                        break
-                    kw['ExclusiveStartKey'] = r['LastEvaluatedKey']
-                return gids
-
-            with _cf.ThreadPoolExecutor(max_workers=_SEGS) as _ex:
-                _sets = list(_ex.map(_scan_seg, range(_SEGS)))
-            _cnt = len(set().union(*_sets))
+            _cnt = _ddb_c.describe_table(
+                TableName='lifesync_customer_result'
+            )['Table']['ItemCount']
             _ddb_ai_target_cache['value'] = _cnt
             _ddb_ai_target_cache['ts']    = _now
         cards[3]['value'] = f'{_cnt:,}'
