@@ -1,4 +1,4 @@
-# 인수인계 — 2026-05-27 세션 종료 시점
+# 인수인계 — 2026-05-28 세션 종료 시점
 
 새 세션 시작 시 이 파일 먼저 읽고 시작할 것.
 
@@ -8,10 +8,87 @@
 
 ```
 branch: main
-최신 커밋: 1fb3f1d  fix(admin): CodeDeploy 배포 시 Flask 재시작 + debug=True
+최신 커밋: 67c384d  chore: .trigger 파일 제거
+         : 075a38a  fix(taskdef): REDIS_HOST/PORT를 plain env에서 Secrets Manager로 이전
 ```
 
-2026-05-27 이번 세션 admin-platform CI/CD 구성 + IaC 스택 업데이트 완료. 커밋 5개 (6528cec ~ 1fb3f1d) 푸시.
+2026-05-28 이번 세션 platform CF stack fix (SM partial ARN secrets 전면 적용) + taskdef.json 동기화 + VPN keepalive 자동화 완료.
+
+---
+
+## 이번 세션(2026-05-28) — platform CF stack fix + VPN keepalive
+
+### 1. CF stack `EnableJwtRuntime` 분기 영구 제거 + SM partial ARN 전면 적용
+
+**문제**: `EnableJwtSecretResources=false` 파라미터로 IaC 재배포될 때마다 secrets=[] dummy taskdef 생성 → CI/CD가 이를 base로 image만 교체 → ECS task 반복 실패 (circuit breaker loop).
+
+**수정**: `_stack21_fixed.yaml` 작성 후 changeset `lifesync-fix-secrets-sm-partial-arn` 실행 → UPDATE_COMPLETE.
+
+변경 리소스 3개 (Replacement 없음):
+| 리소스 | 변경 내용 |
+|---|---|
+| `EcsExecutionRole` | SM `GetSecretValue` 권한 추가 (와일드카드 3개) |
+| `TaskDefinition` | 새 revision 생성 (:168) — `!If EnableJwtRuntime` 분기 제거, unconditional SM secrets |
+| `EcsService` | :168 taskdef ARN으로 업데이트 (desiredCount=0 유지) |
+
+**TaskDefinition 변경 내용**:
+- `!If EnableJwtRuntime` 양분기 → 단일 unconditional containerDefinitions
+- plain env `AURORA_HOST` / `DB_USER` / `DB_PASS` / `REDIS_HOST` / `REDIS_PORT` 전부 제거
+- `USE_MOCK` 하드코딩 `"false"` (UseMockForPlatform 파라미터 무시)
+- `ONPREM_QUERY_LAMBDA` 추가 (기존 template 누락)
+- secrets 6개 전부 SM partial ARN (suffix 없음 → secret 재생성 내성):
+  - `JWT_SECRET` ← `ecs-jwt-signing:jwt::`
+  - `REDIS_HOST` ← `lifesync/dev/redis:host::`
+  - `REDIS_PORT` ← `lifesync/dev/redis:port::`
+  - `DB_USER` ← `/lifesync/dev/db/master:username::`
+  - `DB_PASS` ← `/lifesync/dev/db/master:password::`
+  - `AURORA_HOST` ← `/lifesync/dev/db/master:host::`
+
+**EcsExecutionRole SM 권한** (와일드카드 ARN):
+```
+arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:ecs-jwt-signing*
+arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:/lifesync/dev/db/master*
+arn:aws:secretsmanager:ap-northeast-2:354493396671:secret:lifesync/dev/redis*
+```
+
+### 2. taskdef.json 동기화 (commit `075a38a`)
+
+`lifesync360-platform/taskdef.json` — CF stack과 일치하도록 업데이트:
+- plain env에서 `REDIS_HOST`, `REDIS_PORT` 제거
+- secrets에 `REDIS_HOST ← lifesync/dev/redis:host::`, `REDIS_PORT ← lifesync/dev/redis:port::` 추가
+
+### 3. `lifesync-dev-EcsTaskExecutionRole` SM 정책 수정
+
+인라인 정책 `SecretsManagerAccess` 업데이트:
+- 기존: suffix 하드코딩 (`-hDXOQc`, `-S8ZoCX`) → 재생성 시 깨짐
+- 수정: 와일드카드 partial ARN + `lifesync/dev/redis*` 추가
+
+```json
+"Resource": [
+  "arn:...:secret:ecs-jwt-signing*",
+  "arn:...:secret:/lifesync/dev/db/master*",
+  "arn:...:secret:lifesync/dev/redis*"
+]
+```
+
+> 이 role은 **CF 스택 외부에서 수동 관리됨** — IaC 재배포로 덮어쓰이지 않음. CF 스택의 `EcsExecutionRole`과 별개.
+
+### 4. CI/CD 검증 완료
+
+수동 register :169 (taskdef.json 기반, SM secrets 6개) → ECS service base 업데이트 → push → GitHub Actions → CodePipeline Succeeded → ECS :173 (image `b78b3a30`) running=1, ALB healthy ✅
+
+### 5. VPN keepalive 자동화 (ls-api)
+
+**문제**: ESP 데이터면 idle로 터널 자동 DOWN (DPD는 IKE 제어면만 유지, ESP 별개).
+
+**해결**: `vpn-keepalive.service` (systemd) 배포 — 5초마다 `ping 10.0.0.2` (VPC DNS resolver) → ESP 트래픽 유발.
+
+```
+/usr/local/bin/vpn-keepalive.sh   # 루프: ping -c 1 -W 2 -q 10.0.0.2 && sleep 5
+/etc/systemd/system/vpn-keepalive.service  # enabled, Restart=always
+```
+
+리부팅 후 자동 시작 검증 완료. aws-vpn / aws-vpn-2 모두 UP ✅
 
 ---
 
@@ -153,30 +230,33 @@ RedisIngressFromOnpremSim:  TCP 6379, Source: OnpremSimSg → RedisSgId
 | 클러스터 | `lifesync-service-ecs` |
 | 서비스 | `lifesync-dev-21-lifesync-ecs-existing-vpc-v4-svc` |
 | Task Def family | `lifesync-dev-21-lifesync-ecs-existing-vpc-v4-td` |
-| 현재 PRIMARY | `:151` (image `ef99e6e6`) |
+| 현재 PRIMARY | `:173` (image `b78b3a30`) |
 | ECR | `354493396671.dkr.ecr.ap-northeast-2.amazonaws.com/lifesync-dev-lifesync-service` |
 | ALB DNS | `lifesy-AppLo-J6LliXisfjNY-1279025200.ap-northeast-2.elb.amazonaws.com` |
 | ECS task SG | `sg-0d5719d8a23e3313c` |
 
-### Task Def 환경/시크릿 (정합 후)
+### Task Def 환경/시크릿 (2026-05-28 기준, :173)
 
-env:
+env (plain — 민감정보 없음):
 - `USE_MOCK=false`, `AWS_REGION=ap-northeast-2`
 - `DB_NAME=lifesync360`, `DYNAMO_TABLE=lifesync_customer_result`
-- `REDIS_HOST=lif-re-viqx38lwzx6o.lkjrak.0001.apn2.cache.amazonaws.com`, `REDIS_PORT=6379`
 - `ONPREM_QUERY_LAMBDA=lifesync-onprem-customer-query`, `PROFILE_SYNC_LAMBDA=customer-profile-sync`
 
-secrets (valueFrom):
-- `JWT_SECRET` ← `arn:aws:secretsmanager:...:secret:ecs-jwt-signing-QpgPth:jwt::`
-- `DB_USER` / `DB_PASS` / `AURORA_HOST` ← `arn:aws:secretsmanager:...:secret:/lifesync/dev/db/master-o1Xcxo:{username|password|host}::`
+secrets (전부 SM partial ARN — suffix 없음):
+- `JWT_SECRET` ← `ecs-jwt-signing:jwt::`
+- `REDIS_HOST` ← `lifesync/dev/redis:host::`
+- `REDIS_PORT` ← `lifesync/dev/redis:port::`
+- `DB_USER` / `DB_PASS` / `AURORA_HOST` ← `/lifesync/dev/db/master:{username|password|host}::`
 
-### Secrets Manager 진실 (suffix 자주 outdated 됨 — 작업 시 list-secrets 로 직접 조회 권장)
+> **partial ARN**: suffix(`-QpgPth` 등) 생략. secret 삭제+재생성으로 suffix 바뀌어도 무관.
 
-| Secret | 현재 suffix | JSON shape |
-|---|---|---|
-| `ecs-jwt-signing` | `-QpgPth` | `{"jwt": "<64-hex>"}` |
-| `/lifesync/dev/db/master` | `-o1Xcxo` | `{username, password, host, port, dbname, engine}` |
-| `lifesync/dev/redis` | `-6hwssH` | `{host, port}` — start_ls360.sh 가 참조 |
+### Secrets Manager (작업 시 list-secrets 로 직접 조회 권장)
+
+| Secret | JSON shape |
+|---|---|
+| `ecs-jwt-signing` | `{"jwt": "<64-hex>"}` |
+| `/lifesync/dev/db/master` | `{username, password, host, port, dbname, engine}` |
+| `lifesync/dev/redis` | `{"host": "<endpoint>:6379", "port": "6379"}` — host에 포트 포함 형식 주의 |
 
 ### ElastiCache Redis
 - 실 cluster: `lif-re-viqx38lwzx6o` (endpoint `:6379`)
@@ -397,7 +477,7 @@ aws ec2 describe-security-groups \
 
 ## On-Prem IP 변경 추적
 
-> 현재 IP: `192.168.45.157` (브리지 어댑터, 2026-05-23 변경)
+> 현재 IP: `172.16.1.73` (브리지 어댑터 enp0s3, 2026-05-28 확인)
 
 IP 또는 서브넷 변경 시 동기화 필요 5곳:
 
@@ -462,9 +542,9 @@ IP만 바뀌고 서브넷(/24) 그대로면 1, 2번만 처리하면 됨. 상세 
 
 | 이슈 | 내용 |
 |------|------|
-| **온프레미스 VPN 재구성 중** | VPN 삭제 후 재설정 진행 중 (2026-05-26). 완료 후 아래 on-prem 후속 작업 필수 |
+| **온프레미스 VPN keepalive 자동화** | `vpn-keepalive.service` ls-api에 배포 완료 (2026-05-28). 리부팅 후 자동 시작 검증 완료. aws-vpn / aws-vpn-2 모두 UP |
 | **온프레미스 화면 미표시** | `ONPREM_BASE_URL=http://172.16.1.73`이 EC2에서 직접 호출 → 연결 불가. VPN 재구성 완료 후 `start-admin.ps1` 수정 필요 (아래 참고) |
-| **Lambda PRIVATE_API_URL 구IP** | `lifesync-onprem-customer-query`의 `PRIVATE_API_URL=http://172.16.1.73:80` — 현재 on-prem IP는 `192.168.45.157`. VPN 재구성 후 업데이트 필요 |
+| **Lambda PRIVATE_API_URL** | `lifesync-onprem-customer-query`의 `PRIVATE_API_URL=http://172.16.1.73:80` — IP는 현재 브리지 IP와 일치. VPN TGW 라우팅 재구성 후 연결 확인 필요 |
 | **analytics_segment_performance 0행** | DDB fallback 데이터 없음 → 연령대별 차트 빈 결과 지속 |
 | **ml_model_evaluation_daily 0행** | Precision 카드 빈 결과 |
 | **권한 이슈 4건 IaC 미반영** | #10 kms:Decrypt는 스택 적용 완료. 나머지 #11/#22/#24/#26 은 01b·27 스택 신규 배포 시 자동 반영 — 위 IaC 담당자 전달 섹션 참고 |
