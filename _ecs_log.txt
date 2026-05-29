@@ -1,0 +1,11 @@
+﻿[
+    "  File \"<frozen importlib._bootstrap>\", line 241, in _call_with_frames_removed",
+aws : 
+At line:1 char:136
++ ... ; $result = aws logs get-log-events --log-group-name "/ecs/lifesync-p ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+aws: [ERROR]: 'cp949' codec can't encode character '\u2014' in position 51: illegal multibyte sequence
+    "  File \"/app/app.py\", line 15, in <module>"
