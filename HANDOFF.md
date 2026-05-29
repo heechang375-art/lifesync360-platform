@@ -1,4 +1,4 @@
-# 인수인계 — 2026-05-28 세션 종료 시점
+# 인수인계 — 2026-05-28 세션 종료 시점 (2차)
 
 새 세션 시작 시 이 파일 먼저 읽고 시작할 것.
 
@@ -8,11 +8,72 @@
 
 ```
 branch: main
-최신 커밋: 67c384d  chore: .trigger 파일 제거
-         : 075a38a  fix(taskdef): REDIS_HOST/PORT를 plain env에서 Secrets Manager로 이전
+최신 커밋: fb4e1b1  fix(customer): 교차판매 LIMIT 49로 확장, Python에서 동의 상품 3개 필터
+         : eec4e3b  fix(customer): 교차판매 동의 계열사 상품만 표시 (consent_domains 필터)
+         : 31912fd  fix(customer): 교차판매 target_grade 필터 제거 + 구매 이력 없는 고객 fallback 추가
 ```
 
-2026-05-28 이번 세션 platform CF stack fix (SM partial ARN secrets 전면 적용) + taskdef.json 동기화 + VPN keepalive 자동화 완료.
+2026-05-28 2차 세션: 교차판매 버그 수정 + CTR/CVR 이상 데이터 수정 + 건강점수 0점 원인 분석 + IaC admin 드리프트 파악.
+
+---
+
+## 이번 세션(2026-05-28 2차) — admin-platform 버그 수정 + IaC 분석
+
+### 1. 교차판매(cross-sell) 버그 3종 수정 — app.py ✅
+
+**증상**: G000106253 (BANK/HLT 동의) 교차판매 상품이 표시 안 됨 → 표시 후 동의 안 한 계열사 상품이 섞여 나옴.
+
+**수정 내용 (admin-platform/app.py)**:
+
+| # | 문제 | 수정 |
+|---|------|------|
+| 1 | `target_grade` 필터로 상품 전부 누락 | 필터 제거 |
+| 2 | 구매 이력 없는 고객 fallback 없음 | 구매→추천이력 순 fallback 추가 |
+| 3 | `LIMIT 3` → 상위 3개 룰이 비동의 계열사 → 전부 NULL | `LIMIT 49` + Python에서 `len(crosssell)<3` cap |
+| 4 | 동의 안 한 계열사 상품 표시 | `consent_domains` 추출 후 `company_master` JOIN 필터 |
+
+**핵심**: `ONPREM_QUERY_LAMBDA` 기본값이 `app.py` line 104에 하드코딩(`lifesync-onprem-customer-query`) → 항상 Lambda 호출됨. 시뮬레이션 스크립트(`_diag_cs3.py`)가 env var 없으면 빈값으로 처리해서 혼동이 있었음.
+
+### 2. CTR/CVR 이상 데이터 수정 — Aurora ✅
+
+**증상**: `clicked_flag=N, purchased_flag=Y` 4건 존재 → CTR/CVR 집계 왜곡.
+
+```sql
+UPDATE customer_recommend_history
+SET clicked_flag = 'Y'
+WHERE clicked_flag NOT IN ('Y','1') AND purchased_flag IN ('Y','1');
+-- 4건 수정
+```
+
+수정 후: total=24,200, clicked=3,713, purchased=207, CTR=15.3%, CVR=5.6%
+
+### 3. 건강점수(health_score) 0점 원인 분석 — 미해결
+
+**증상**: G000106253 건강점수 화면에 0점 표시 (이전 비디오에서 ~66점이었음).
+
+**원인 확정**:
+- `lifesync-curated/health_mart/dt=2026-05-13` 이후 G000106253 **없음** (2026-05-11~12에는 health_score=74 있었음)
+- `lifesync-ingest-lambda/result_lambda.py` line 287: `row.get("health_score", 0)` — 데이터 없으면 기본값 0으로 DynamoDB 덮어씀
+- 근본 원인: 2026-05-13부터 이 고객 웨어러블/건강 데이터 수집 단절
+
+**DynamoDB 지워지는 건 아님**: TTL 7일이지만 PRUNE_OLDER_VERSIONS로 구버전만 삭제, 최신 1건 유지. ItemCount=58,651 정상.
+
+**미해결 작업**:
+- 이 고객 웨어러블 데이터 수집 재개 여부 확인 (wearable-ec2 또는 raw S3 확인)
+- `result_lambda.py`: health_score 없는 행은 0으로 덮어쓰지 않도록 방어 로직 추가 검토
+
+### 4. IaC admin 드리프트 분석 — 미수정
+
+수동으로 만든 admin CI/CD 리소스가 `lifesync-dev-18-cicd-pipelines` 스택에 있음이 확인됐으나, `18-cicd-pipelines.yaml` 로컬 파일에는 admin 관련 내용 없음.
+
+**IaC에 반영 필요한 항목**:
+
+| 파일 | 변경 내용 |
+|------|-----------|
+| `18-cicd-pipelines.yaml` | admin CI/CD 4개 리소스 추가: CodeDeploy App(`admin-platform-codedeploy`), DeploymentGroup(`admin-platform-deployment-group`), CodeBuild(`lifesync-dev-admin-platform-build`), Pipeline(`admin-platform-pipeline`) |
+| `24-admin-windows-ec2.yaml` | 파일명 → `26-admin-windows-ec2.yaml`으로 변경 (스택명 `lifesync-dev-26-...` 기준) |
+
+`24-admin-windows-ec2.yaml`의 UserData에는 CodeDeploy agent 설치 블록(`[2b/5]`)이 이미 있고, 실제 스택에도 반영돼 있음.
 
 ---
 

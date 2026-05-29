@@ -1,0 +1,6 @@
+================================================================================
+SHEET: SCN-02(웨어러블) shape: (166, 9)
+================================================================================
+Traceback (most recent call last):
+  File "<stdin>", line 9, in <module>
+UnicodeEncodeError: 'cp949' codec can't encode character '\u2014' in position 33956: illegal multibyte sequence

@@ -1,0 +1,7 @@
+{
+  "commands": [
+    "try { $r = Invoke-WebRequest -Uri http://172.16.1.73/internal/health/local-lab -TimeoutSec 5 -UseBasicParsing; Write-Output \"HTTP $($r.StatusCode)\" } catch { Write-Output \"ERROR: $($_.Exception.Message)\" }",
+    "$tc = Test-NetConnection -ComputerName 172.16.1.73 -Port 80 -InformationLevel Quiet -WarningAction SilentlyContinue; Write-Output \"TCP80: $tc\"",
+    "$tc2 = Test-NetConnection -ComputerName 172.16.1.73 -Port 5000 -InformationLevel Quiet -WarningAction SilentlyContinue; Write-Output \"TCP5000: $tc2\""
+  ]
+}

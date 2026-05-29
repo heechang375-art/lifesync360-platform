@@ -1,0 +1,15 @@
+{
+    "CommandId": "162fec72-15f0-422b-b370-a2cd1be94557",
+    "InstanceId": "i-0c3668c5dbbb5262b",
+    "Comment": "",
+    "DocumentName": "AWS-RunPowerShellScript",
+    "DocumentVersion": "$DEFAULT",
+    "PluginName": "aws:runPowerShellScript",
+    "ResponseCode": 0,
+    "ExecutionStartDateTime": "2026-05-28T11:06:04.268Z",
+    "ExecutionElapsedTime": "PT1.513S",
+    "ExecutionEndDateTime": "2026-05-28T11:06:05.268Z",
+    "Status": "Success",
+    "StatusDetails": "Success",
+    "StandardOutputContent": 
+aws: [ERROR]: 'cp949' codec can't encode character '\u2014' in position 46: illegal multibyte sequence

@@ -1,0 +1,32 @@
+{# 7일 추이 — 막대 (추천 수) + 선 (CTR/CVR). trend_7d 받음. 빈 list 면 안내 표시. #}
+{% if trend_7d %}
+{% set max_r = trend_7d|map(attribute='recommended')|max %}
+<svg viewBox="0 0 600 220" style="width:100%; height:220px;">
+    {% for y in [40, 90, 140, 190] %}
+    <line x1="40" x2="590" y1="{{ y }}" y2="{{ y }}" stroke="#f1f5f9" stroke-width="1"/>
+    {% endfor %}
+    {% set bw = 60 %}
+    {% set gap = 18 %}
+    {% for d in trend_7d %}
+    {% set x = 50 + loop.index0 * (bw + gap) %}
+    {% set h = (d.recommended / max_r * 150) | round(0, 'floor') | int if max_r else 0 %}
+    <rect x="{{ x }}" y="{{ 195 - h }}" width="{{ bw }}" height="{{ h }}" fill="#dbeafe" rx="3"/>
+    <text x="{{ x + bw / 2 }}" y="210" text-anchor="middle" font-size="10" fill="#94a3b8">{{ d.date }}</text>
+    {% endfor %}
+    <polyline fill="none" stroke="#3b82f6" stroke-width="2"
+        points="{% for d in trend_7d %}{{ 50 + loop.index0 * (bw + gap) + bw/2 }},{{ 195 - (d.ctr / 30 * 150) | round(0,'floor') | int }} {% endfor %}"/>
+    <polyline fill="none" stroke="#f59e0b" stroke-width="2"
+        points="{% for d in trend_7d %}{{ 50 + loop.index0 * (bw + gap) + bw/2 }},{{ 195 - (d.cvr / 30 * 150) | round(0,'floor') | int }} {% endfor %}"/>
+    {% for d in trend_7d %}
+    <circle cx="{{ 50 + loop.index0 * (bw + gap) + bw/2 }}" cy="{{ 195 - (d.ctr / 30 * 150) | round(0,'floor') | int }}" r="3" fill="#3b82f6"/>
+    <circle cx="{{ 50 + loop.index0 * (bw + gap) + bw/2 }}" cy="{{ 195 - (d.cvr / 30 * 150) | round(0,'floor') | int }}" r="3" fill="#f59e0b"/>
+    {% endfor %}
+</svg>
+<div style="display:flex; gap:14px; justify-content:center; font-size:11px; color:#64748b; margin-top:4px;">
+    <span><span style="display:inline-block; width:10px; height:3px; background:#dbeafe; vertical-align:middle; margin-right:4px;"></span>추천 건수</span>
+    <span><span style="display:inline-block; width:10px; height:3px; background:#3b82f6; vertical-align:middle; margin-right:4px;"></span>CTR</span>
+    <span><span style="display:inline-block; width:10px; height:3px; background:#f59e0b; vertical-align:middle; margin-right:4px;"></span>CVR</span>
+</div>
+{% else %}
+<div style="height:220px; display:flex; align-items:center; justify-content:center; color:#cbd5e1; font-size:12px; border:1px dashed #e5e7eb; border-radius:6px;">데이터 없음</div>
+{% endif %}

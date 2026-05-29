@@ -13,6 +13,11 @@ app = Flask(__name__)
 JWT_SECRET          = os.environ.get('JWT_SECRET')
 if not JWT_SECRET:
     raise RuntimeError('JWT_SECRET 환경변수 누락 — IaC env 주입 확인 필요')
+
+# ── CI/CD 롤백 테스트 ── 아래 raise 주석 해제 시 배포 즉시 실패 → 롤백
+# raise RuntimeError('CI/CD rollback test')
+# ──────────────────────────────────────────────────────
+
 ONPREM_QUERY_LAMBDA  = os.environ.get('ONPREM_QUERY_LAMBDA', 'lifesync-onprem-customer-query')
 AWS_REGION           = os.environ.get('AWS_REGION', 'ap-northeast-2')
 

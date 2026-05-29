@@ -1,0 +1,14 @@
+{# 연령대별 추천 성과 — age_perf: [{age, ctr, cvr}, ...]. 빈 list 면 안내 #}
+{% if age_perf %}
+{% for a in age_perf %}
+<div style="margin-bottom:8px;">
+    <div style="display:flex; justify-content:space-between; font-size:11px; color:#64748b; margin-bottom:3px;">
+        <span style="font-weight:600;">{{ a.age }}</span>
+        <span>CTR {{ a.ctr }}% · CVR {{ a.cvr }}%</span>
+    </div>
+    <div class="bar-track" style="height:6px;"><div class="bar-fill" style="width: {{ a.ctr * 4 }}%; background:#6366f1;"></div></div>
+</div>
+{% endfor %}
+{% else %}
+<div style="height:120px; display:flex; align-items:center; justify-content:center; color:#cbd5e1; font-size:12px; border:1px dashed #e5e7eb; border-radius:6px;">데이터 없음</div>
+{% endif %}

@@ -136,10 +136,15 @@ Start-Process powershell -ArgumentList '-NonInteractive -WindowStyle Hidden -Fil
 | admin-platform — 8개 VPC 카드 전체 표시 (pf/we/dt/gvm/mgmt/cn/gcp/on) | ✅ 2026-05-26 |
 | admin-platform — GCP 카드 정상 표시 (BigQuery·Vertex AI·Cloud Run) | ✅ 2026-05-26 |
 | admin-platform — 배포 경로 확정 및 deploy_to_ec2.ps1 생성 | ✅ 2026-05-26 |
+| admin-platform — 교차판매 버그 3종 수정 (grade필터 제거/fallback/LIMIT 49/동의필터) | ✅ 2026-05-28 |
+| admin-platform — CTR/CVR 이상 4건 수정 (clicked_flag N→Y, purchased=Y) | ✅ 2026-05-28 |
+| admin-platform — 건강점수 0점 원인 분석 (health_mart 데이터 단절 확인) | ⏳ 웨어러블 데이터 수집 재개 확인 필요 |
 | GitHub → CodeCommit 미러 CI | ✅ |
+| admin CI/CD 파이프라인 구성 (CodeCommit→CodeBuild→CodeDeploy→Windows EC2) | ✅ 2026-05-27 |
 | taskdef.json / buildspec.yml / appspec.yaml (platform + admin) | ✅ |
 | IaC / 코드 354 계정 기준 정리 (data.env, taskdef.json, app.py, start_ls360.sh) | ✅ |
 | 732 계정 CloudFormation 스택 14개 전체 삭제 + 별도 추가 리소스 정리 | ✅ |
+| IaC admin CI/CD 드리프트 반영 (18-cicd-pipelines.yaml + 파일명 변경) | ⏳ |
 | /api/me name/grade 연동 (PII 복호화 + DynamoDB grade) | ⏳ |
 | Aurora users_ref 동기화 테이블 설계 및 구축 (어드민 유저목록 이름/이메일 표시) | ⏳ |
 

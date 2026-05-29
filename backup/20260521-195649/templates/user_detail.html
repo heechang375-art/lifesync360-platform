@@ -1,0 +1,287 @@
+{% extends 'base.html' %}
+{% block title %}{{ user.name }} – Admin{% endblock %}
+{% block page_title %}유저 상세{% endblock %}
+
+{% block content %}
+<a class="back-link" href="{{ url_for('users') }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="15 18 9 12 15 6"/>
+    </svg>
+    유저 목록으로
+</a>
+
+<!-- Customer 360 요약 (시안 02_customer360.png 상단 3카드) -->
+<div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px; margin-bottom:10px;">
+    <div class="card" style="padding:10px 12px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+            <div style="width:48px; height:48px; border-radius:50%; background:#6366f1; color:#fff; display:flex; align-items:center; justify-content:center; font-size:18px; font-weight:700;">
+                {% if scores and scores.dynamic_score %}{{ scores.dynamic_score | float | round | int }}{% else %}-{% endif %}
+            </div>
+            <div>
+                <div style="font-size:15px; font-weight:700;">{{ user.name }}</div>
+                <div style="font-size:11px; color:#94a3b8;" class="mono">{{ user.global_id }} · <span class="badge badge-{{ user.grade | lower }}" style="font-size:10px;">{{ user.grade }}</span></div>
+            </div>
+        </div>
+        <div style="margin-top:12px; font-size:11px; color:#64748b;">
+            ls_user_id: <span class="mono">{{ user.ls_user_id }}</span>
+        </div>
+    </div>
+
+    <div class="card" style="padding:10px 12px;">
+        <div style="font-size:11px; color:#64748b;">종합 점수 (DynamoDB)</div>
+        <div style="font-size:28px; font-weight:700; color:#16a34a; margin-top:4px;">
+            {{ scores.dynamic_score if scores else '-' }}
+        </div>
+        {% if scores %}
+        <div style="font-size:11px; color:#475569; margin-top:6px;">
+            건강 <strong>{{ scores.health_score or '-' }}</strong> ·
+            금융 <strong>{{ scores.fin_score or '-' }}</strong> ·
+            행동 <strong>{{ scores.behavior_score or '-' }}</strong>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="card" style="padding:10px 12px;">
+        <div style="font-size:11px; color:#64748b;">Next Best Action</div>
+        {% if scores and scores.next_best_action %}
+        <div style="font-size:13px; font-weight:600; color:#1e293b; margin-top:6px; line-height:1.4;">{{ scores.next_best_action }}</div>
+        <div style="margin-top:8px; font-size:11px; color:#475569;">
+            VIP <strong>{{ ((scores.vip_prob | float) * 100) | round | int if scores.vip_prob else 0 }}%</strong> ·
+            가입 <strong>{{ ((scores.signup_prob | float) * 100) | round | int if scores.signup_prob else 0 }}%</strong> ·
+            추천 <strong>{{ ((scores.rec_prob | float) * 100) | round | int if scores.rec_prob else 0 }}%</strong>
+        </div>
+        {% else %}
+        <div style="font-size:12px; color:#94a3b8; margin-top:6px;">데이터 없음</div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Personalized Recommendation Top 3 (Redis) + 교차판매 (시안 02_customer360.png 중앙 카드) -->
+{% if personalized and personalized.top3 %}
+<div class="card" style="margin-bottom:10px;">
+    <div class="card-title">Personalized Recommendation · Redis Top 3</div>
+    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:10px;">
+        {% for r in personalized.top3 %}
+        <div style="background:#fff; border:1px solid #e2e8f0; border-radius:8px; padding:12px; position:relative;">
+            <div style="font-size:11px; color:#94a3b8;">#{{ r.rank }} · {{ r.category }}</div>
+            <div style="font-size:14px; font-weight:700; color:#1e293b; margin-top:4px;">{{ r.product }}</div>
+            <div style="margin-top:8px; display:flex; align-items:center; gap:8px;">
+                <div style="flex:1; background:#f1f5f9; border-radius:4px; height:8px;">
+                    <div style="height:100%; background:{{ r.color }}; width:{{ (r.ai_score * 100) | round }}%; border-radius:4px;"></div>
+                </div>
+                <span class="mono" style="font-size:11px; color:{{ r.color }}; font-weight:700;">AI {{ r.ai_score }}</span>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    <div style="margin-top:12px; padding:8px 12px; background:#fff7ed; border-left:3px solid #f97316; border-radius:4px; font-size:12px; color:#7c2d12;">
+        🔗 교차판매: <strong>{{ personalized.crosssell_note }}</strong>
+        <span style="margin-left:8px; font-size:10px; color:#94a3b8; font-family:monospace;">
+            {{ personalized.source }} (TTL {{ personalized.ttl_minutes }}m)
+        </span>
+    </div>
+</div>
+{% endif %}
+
+<div class="detail-content">
+
+    <!-- 계정 정보 -->
+    <div id="sec-info" class="detail-section">
+        <div class="card">
+            <div class="card-title">계정 정보</div>
+            <div class="info-row">
+                <span class="info-key">이름</span>
+                <span class="info-val"><strong>{{ user.name }}</strong></span>
+            </div>
+            <div class="info-row">
+                <span class="info-key">이메일</span>
+                <span class="info-val">{{ user.email }}</span>
+            </div>
+            <div class="info-row">
+                <span class="info-key">등급</span>
+                <span class="info-val">
+                    <span class="badge badge-{{ user.grade | lower }}">{{ user.grade }}</span>
+                </span>
+            </div>
+            <div class="info-row">
+                <span class="info-key">회원번호</span>
+                <span class="info-val mono">{{ user.ls_user_id }}</span>
+            </div>
+            <div class="info-row">
+                <span class="info-key">Global ID</span>
+                <span class="info-val mono">{{ user.global_id }}</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- AI 분석 -->
+    <div id="sec-scores" class="detail-section">
+        {% if scores %}
+        <div class="card">
+            <div class="card-title">AI 분석 점수</div>
+            <div class="score-grid">
+                <div class="score-item">
+                    <div class="score-item-label">종합점수</div>
+                    <div class="score-item-value">{{ scores.dynamic_score }}</div>
+                </div>
+                <div class="score-item">
+                    <div class="score-item-label">건강점수</div>
+                    <div class="score-item-value">{{ scores.health_score }}</div>
+                </div>
+                <div class="score-item">
+                    <div class="score-item-label">금융점수</div>
+                    <div class="score-item-value">{{ scores.fin_score or '-' }}</div>
+                </div>
+                <div class="score-item">
+                    <div class="score-item-label">행동점수</div>
+                    <div class="score-item-value">{{ scores.behavior_score or '-' }}</div>
+                </div>
+            </div>
+            <div style="margin-top:20px; display:flex; flex-direction:column; gap:10px;">
+                {% if scores.vip_prob %}
+                {% set vip_pct = (scores.vip_prob | float * 100) | round(0) | int %}
+                <div class="prob-row">
+                    <span class="prob-label">VIP 달성 확률</span>
+                    <div class="vip-bar-track">
+                        <div class="vip-bar-fill" style="width: {{ vip_pct }}%; background:#a855f7;"></div>
+                    </div>
+                    <span class="prob-pct" style="color:#7c3aed;">{{ vip_pct }}%</span>
+                </div>
+                {% endif %}
+                {% if scores.signup_prob %}
+                {% set signup_pct = (scores.signup_prob | float * 100) | round(0) | int %}
+                <div class="prob-row">
+                    <span class="prob-label">가입 확률</span>
+                    <div class="vip-bar-track">
+                        <div class="vip-bar-fill" style="width: {{ signup_pct }}%; background:#3b82f6;"></div>
+                    </div>
+                    <span class="prob-pct" style="color:#2563eb;">{{ signup_pct }}%</span>
+                </div>
+                {% endif %}
+                {% if scores.rec_prob %}
+                {% set rec_pct = (scores.rec_prob | float * 100) | round(0) | int %}
+                <div class="prob-row">
+                    <span class="prob-label">추천 반응 확률</span>
+                    <div class="vip-bar-track">
+                        <div class="vip-bar-fill" style="width: {{ rec_pct }}%; background:#10b981;"></div>
+                    </div>
+                    <span class="prob-pct" style="color:#059669;">{{ rec_pct }}%</span>
+                </div>
+                {% endif %}
+            </div>
+            <div class="update-time">마지막 분석: {{ scores.update_time or '-' }}</div>
+        </div>
+        {% if scores.next_best_action %}
+        <div class="nba-card">
+            <div class="nba-label">AI 추천 액션 (Next Best Action)</div>
+            <div class="nba-text">{{ scores.next_best_action }}</div>
+        </div>
+        {% endif %}
+        {% else %}
+        <div class="no-data-card">
+            <svg viewBox="0 0 24 24" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="width:36px;height:36px;stroke:#cbd5e1;margin-bottom:12px;">
+                <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+            <strong style="color:#64748b;">분석 데이터 없음</strong>
+            <p>GCP Vertex AI 분석이 아직 완료되지 않은 유저입니다.</p>
+            <p style="margin-top:6px;">매일 새벽 04:00 이후 분석 결과가 반영됩니다.</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- 동의 현황 -->
+    <div id="sec-consent" class="detail-section">
+        <div class="card">
+            <div class="card-title">동의 현황</div>
+            {% if consents %}
+            <div class="consent-grid">
+                {% for c in consents %}
+                <div class="consent-item">
+                    <span class="consent-key">{{ consent_labels.get(c.domain, c.domain) }}</span>
+                    {% if c.consent_flag == 'Y' %}
+                    <span class="consent-y">동의</span>
+                    {% else %}
+                    <span class="consent-n">미동의</span>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p style="color:#94a3b8; font-size:14px;">동의 정보가 없습니다.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- 추천 이력 -->
+    <div id="sec-recommend" class="detail-section">
+        <div class="card">
+            <div class="card-title">추천 이력</div>
+            {% if recommend_history %}
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>상품명</th>
+                            <th>상태</th>
+                            <th>추천일시</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for r in recommend_history %}
+                        <tr>
+                            <td>{{ r.product_name }}</td>
+                            <td>
+                                {% if r.purchased_flag == 'Y' %}
+                                <span class="badge badge-purchased">구매완료</span>
+                                {% elif r.clicked_flag == 'Y' %}
+                                <span class="badge badge-clicked">클릭</span>
+                                {% else %}
+                                <span class="badge badge-recommended">추천됨</span>
+                                {% endif %}
+                            </td>
+                            <td class="mono">{{ r.recommended_at }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p style="color:#94a3b8; font-size:14px;">추천 이력이 없습니다.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- 제휴사 매핑 -->
+    <div id="sec-identity" class="detail-section">
+        <div class="card">
+            <div class="card-title">제휴사 매핑</div>
+            {% if identities %}
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>제휴사</th>
+                            <th>제휴 고객 ID</th>
+                            <th>연결일</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for i in identities %}
+                        <tr>
+                            <td>{{ consent_labels.get(i.company_id, i.company_id) }}</td>
+                            <td class="mono">{{ i.affiliate_customer_id }}</td>
+                            <td class="mono">{{ i.linked_at }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p style="color:#94a3b8; font-size:14px;">연결된 제휴사가 없습니다.</p>
+            {% endif %}
+        </div>
+    </div>
+
+</div>
+
+{% endblock %}

@@ -1,0 +1,277 @@
+{% extends 'base.html' %}
+{% block title %}AI 추천 — Admin{% endblock %}
+
+{% block content %}
+<div class="page-title">AI 추천 성능 분석</div>
+<div class="page-sub">Vertex AI 신호 결과 + Aurora 운영 KPI + BigQuery 분석 지표</div>
+
+<!-- 4 KPI -->
+<section class="section">
+    <div class="section-title">💎 핵심 추천 지표<span class="ts" id="ts-ai-kpi">갱신: --:--:--</span></div>
+    <div class="grid grid-4">
+        {% for k in kpi4 %}
+        <div class="kpi" style="border-left-color: {{ k.accent }};">
+            <div class="kpi-label">{{ k.label }}</div>
+            <div class="kpi-value" id="ai-kpi-value-{{ loop.index0 }}" style="color: {{ k.accent }};">{{ k.value }}</div>
+            <div class="kpi-sub"   id="ai-kpi-sub-{{ loop.index0 }}">{{ k.sub }}</div>
+        </div>
+        {% endfor %}
+    </div>
+</section>
+
+<!-- 7일 추이 + 상품 TOP10 (2:1 비율) -->
+<section class="section">
+    <div class="section-title">📈 일별 추천 성과 추이 (7일)</div>
+    <div class="grid" style="grid-template-columns: 2fr 1fr;">
+
+        <!-- 7일 추이 (Bar + Line SVG) -->
+        <div>
+            <div class="card-title">📊 추천 건수 / CTR / CVR <span style="color:#94a3b8; font-weight:500;">(최근 7일)</span></div>
+            {% if trend_7d %}
+            {% set max_r = (trend_7d|map(attribute='recommended')|max) or 1 %}
+            <svg viewBox="0 0 600 220" style="width:100%; height:220px;">
+                <!-- Y 그리드 -->
+                {% for y in [40, 90, 140, 190] %}
+                <line x1="40" x2="590" y1="{{ y }}" y2="{{ y }}" stroke="#f1f5f9" stroke-width="1"/>
+                {% endfor %}
+                <!-- 막대 (추천 수) -->
+                {% set bw = 60 %}
+                {% set gap = 18 %}
+                {% for d in trend_7d %}
+                {% set x = 50 + loop.index0 * (bw + gap) %}
+                {% set h = (d.recommended / max_r * 150) | round(0, 'floor') | int %}
+                <rect x="{{ x }}" y="{{ 195 - h }}" width="{{ bw }}" height="{{ h }}" fill="#dbeafe" rx="3"/>
+                <text x="{{ x + bw / 2 }}" y="210" text-anchor="middle" font-size="10" fill="#94a3b8">{{ d.date }}</text>
+                {% endfor %}
+                <!-- 선 (CTR) -->
+                <polyline fill="none" stroke="#3b82f6" stroke-width="2"
+                    points="{% for d in trend_7d %}{{ 50 + loop.index0 * (bw + gap) + bw/2 }},{{ 195 - (d.ctr / 30 * 150) | round(0,'floor') | int }} {% endfor %}"/>
+                <!-- 선 (CVR) -->
+                <polyline fill="none" stroke="#f59e0b" stroke-width="2"
+                    points="{% for d in trend_7d %}{{ 50 + loop.index0 * (bw + gap) + bw/2 }},{{ 195 - (d.cvr / 30 * 150) | round(0,'floor') | int }} {% endfor %}"/>
+                <!-- 도트 -->
+                {% for d in trend_7d %}
+                <circle cx="{{ 50 + loop.index0 * (bw + gap) + bw/2 }}" cy="{{ 195 - (d.ctr / 30 * 150) | round(0,'floor') | int }}" r="3" fill="#3b82f6"/>
+                <circle cx="{{ 50 + loop.index0 * (bw + gap) + bw/2 }}" cy="{{ 195 - (d.cvr / 30 * 150) | round(0,'floor') | int }}" r="3" fill="#f59e0b"/>
+                {% endfor %}
+            </svg>
+            {% else %}
+            <div style="height:220px; display:flex; align-items:center; justify-content:center; color:#cbd5e1; font-size:13px;">데이터 없음</div>
+            {% endif %}
+            <div style="display:flex; gap:14px; justify-content:center; font-size:11px; color:#64748b; margin-top:4px;">
+                <span><span style="display:inline-block; width:10px; height:3px; background:#dbeafe; vertical-align:middle; margin-right:4px;"></span>추천 건수</span>
+                <span><span style="display:inline-block; width:10px; height:3px; background:#3b82f6; vertical-align:middle; margin-right:4px;"></span>CTR</span>
+                <span><span style="display:inline-block; width:10px; height:3px; background:#f59e0b; vertical-align:middle; margin-right:4px;"></span>CVR</span>
+            </div>
+        </div>
+
+        <!-- 상품 TOP10 -->
+        <div>
+            <div class="card-title">🥇 상품 TOP 10</div>
+            {% for p in top10[:10] %}
+            <div class="topn-row" style="padding:6px 0;">
+                <div class="topn-rank">{{ p.rank }}</div>
+                <div class="topn-name" style="font-size:12px;">{{ p.product }}</div>
+                <div style="font-size:11px; color:#94a3b8; margin-right:6px;">{{ '{:,}'.format(p.recommended) }}</div>
+                <div class="topn-score" style="font-size:11px;">{{ p.ctr }}%</div>
+            </div>
+            {% endfor %}
+        </div>
+
+    </div>
+</section>
+
+<!-- 세그먼트 & 분포 분석 (3 카드) -->
+<section class="section">
+    <div class="section-title">🎯 세그먼트 & 분포 분석</div>
+    <div class="grid grid-3">
+
+        <!-- 카테고리별 도넛 -->
+        <div>
+            <div class="card-title">🍩 카테고리별 추천</div>
+            <div class="donut-wrap">
+                <svg viewBox="0 0 120 120" style="width:120px; height:120px; flex-shrink:0;">
+                    {% set cs = 100 %}
+                    {% set r = 45 %}
+                    {% set ns = namespace(off=0) %}
+                    {% for c in cat_donut %}
+                    {% set len = c.pct * 2 * 3.14159 * r / 100 %}
+                    <circle cx="60" cy="60" r="{{ r }}" fill="none" stroke="{{ c.color }}" stroke-width="18"
+                        stroke-dasharray="{{ len }} {{ 2 * 3.14159 * r }}" stroke-dashoffset="-{{ ns.off }}"
+                        transform="rotate(-90 60 60)"/>
+                    {% set ns.off = ns.off + len %}
+                    {% endfor %}
+                    <text x="60" y="58" text-anchor="middle" font-size="13" font-weight="700" fill="#1e293b">100%</text>
+                    <text x="60" y="72" text-anchor="middle" font-size="9" fill="#94a3b8">CTR 기준</text>
+                </svg>
+                <div class="donut-legend">
+                    {% for c in cat_donut %}
+                    <div class="donut-legend-row">
+                        <span class="dot" style="background: {{ c.color }};"></span>
+                        <span class="name">{{ c.name }}</span>
+                        <span class="pct">{{ c.pct }}%</span>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <!-- 연령대별 추천 성과 -->
+        <div>
+            <div class="card-title">📊 연령대별 추천 성과</div>
+            {% for a in age_perf %}
+            <div style="margin-bottom:8px;">
+                <div style="display:flex; justify-content:space-between; font-size:11px; color:#64748b; margin-bottom:3px;">
+                    <span style="font-weight:600;">{{ a.age }}</span>
+                    <span>CTR {{ a.ctr }}% · CVR {{ a.cvr }}%</span>
+                </div>
+                <div class="bar-track" style="height:6px;"><div class="bar-fill" style="width: {{ a.ctr * 4 }}%; background:#6366f1;"></div></div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <!-- 고객 등급 분포 -->
+        <div>
+            <div class="card-title">👥 고객 등급 분포 <span style="color:#94a3b8; font-weight:500;">(분석대상 60K)</span></div>
+            <div class="grid grid-5" style="gap:6px;">
+                {% for g in grade_dist %}
+                <div style="background:#f8fafc; border-radius:6px; padding:8px 4px; text-align:center;">
+                    <div style="font-size:14px; font-weight:700; color:{{ g.color }};">{{ '{:,}'.format(g.count) }}</div>
+                    <div style="font-size:9px; color:#94a3b8; margin-top:2px;">{{ g.grade }}</div>
+                </div>
+                {% endfor %}
+            </div>
+            <div style="margin-top:10px; font-size:10px; color:#94a3b8;">DynamoDB dynamic_grade · 합계 60,000</div>
+            <div style="display:flex; gap:6px; margin-top:6px; font-size:10px;">
+                {% for g in grade_dist %}
+                <span class="pill" style="background:#f1f5f9; color:{{ g.color }}; padding:1px 6px; font-size:9px;">{{ g.pct }}%</span>
+                {% endfor %}
+            </div>
+        </div>
+
+    </div>
+</section>
+
+<!-- BIGQUERY 분석 (3 카드) -->
+<section class="section">
+    <div class="section-title">🔬 BIGQUERY 분석 <span class="pipe">|</span> <span class="sub">AD-HOC 분석</span></div>
+    <div class="grid grid-3">
+
+        <!-- Feature 분포 -->
+        <div>
+            <div class="card-title">🧬 FEATURE 분포 <span style="color:#94a3b8; font-weight:500;">(VERTEX AI)</span></div>
+            {% for f in feature_dist %}
+            <div style="margin-bottom:6px;">
+                <div style="display:flex; justify-content:space-between; font-size:11px; color:#64748b; margin-bottom:2px;">
+                    <span>{{ f.name }}</span>
+                    <span style="font-weight:700; color:#3b82f6;">{{ '%.3f'|format(f.pct) }}</span>
+                </div>
+                <div class="bar-track" style="height:5px;"><div class="bar-fill" style="width: {{ (f.pct * 100 * 4) | round(0, 'floor') | int }}%; background:#3b82f6;"></div></div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <!-- 추천 데이터 분석 -->
+        <div>
+            <div class="card-title">🗄 추천 데이터 분석</div>
+            {% for r in rec_data %}
+            <div style="display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px solid #f1f5f9; font-size:11px;">
+                <span class="mono" style="color:#1e293b; font-size:11px;">{{ r.name }}</span>
+                <span style="font-weight:700; color:#3b82f6;">{{ '{:,}'.format(r.count) }}</span>
+            </div>
+            {% endfor %}
+            <div style="font-size:10px; color:#cbd5e1; margin-top:6px; text-align:right;">action_code 별 추천 수 (전 7일)</div>
+        </div>
+
+        <!-- 고객 인사이트 분석 -->
+        <div>
+            <div class="card-title">🌟 고객 인사이트 분석</div>
+            <div style="font-size:10px; color:#94a3b8; font-family:monospace; background:#f8fafc; border-radius:4px; padding:6px 8px; margin-bottom:10px;">{{ insight.source }}</div>
+            {% for it in insight.rows %}
+            <div style="padding:6px 0; border-bottom:1px solid #f1f5f9;">
+                <div style="display:flex; justify-content:space-between; align-items:baseline;">
+                    <span style="font-size:11px; color:#64748b;">{{ it.label }}</span>
+                    <span style="font-size:16px; font-weight:700; color:#3b82f6;">{{ it.value }}</span>
+                </div>
+                <div style="font-size:10px; color:#94a3b8; text-align:right;">{{ it.sub }}</div>
+            </div>
+            {% endfor %}
+        </div>
+
+    </div>
+</section>
+
+<!-- AI 모델 평가 (2 카드) -->
+<section class="section">
+    <div class="section-title">🤖 AI 모델 평가 <span class="pipe">|</span> <span class="sub">VERTEX AI · LIFESYNC_ML</span></div>
+    <div class="grid grid-2">
+
+        <!-- AI 예측 출현 분포 (히스토그램) -->
+        <div>
+            <div class="card-title">📊 AI 예측 출현 분포 <span style="color:#94a3b8; font-weight:500;">(DYNAMODB)</span></div>
+            {% if ddb_hist %}
+            {% set hist_max = (ddb_hist|map(attribute='count')|max) or 1 %}
+            <svg viewBox="0 0 400 180" style="width:100%; height:180px;">
+                {% set hbw = 42 %}
+                {% set hgap = 8 %}
+                {% for h in ddb_hist %}
+                {% set x = 20 + loop.index0 * (hbw + hgap) %}
+                {% set hh = (h.count / hist_max * 130) | round(0,'floor') | int %}
+                <rect x="{{ x }}" y="{{ 150 - hh }}" width="{{ hbw }}" height="{{ hh }}" fill="{{ h.color }}" rx="3"/>
+                <text x="{{ x + hbw/2 }}" y="170" text-anchor="middle" font-size="9" fill="#94a3b8">{{ h.bucket }}</text>
+                {% endfor %}
+            </svg>
+            <div style="font-size:10px; color:#94a3b8; text-align:center;">dynamic_score 히스토그램 · 분석대상 60,000 · 평균 64.2</div>
+            {% else %}
+            <div style="height:180px; display:flex; align-items:center; justify-content:center; color:#cbd5e1; font-size:13px;">데이터 없음</div>
+            {% endif %}
+        </div>
+
+        <!-- Precision / Recall -->
+        <div>
+            <div class="card-title">🎯 PRECISION / RECALL <span style="color:#94a3b8; font-weight:500;">(AURORA MODEL_PERFORMANCE_HISTORY)</span></div>
+            {% for m in pr_models %}
+            <div style="margin-bottom:14px;">
+                <div style="font-size:12px; font-weight:600; color:#1e293b; margin-bottom:6px;">{{ m.name }}</div>
+                <div style="margin-bottom:6px;">
+                    <div style="display:flex; justify-content:space-between; font-size:11px; margin-bottom:2px;">
+                        <span style="color:#64748b;">Precision</span>
+                        <span style="font-weight:700; color:#16a34a;">{{ m.precision }}%</span>
+                    </div>
+                    <div class="bar-track" style="height:6px;"><div class="bar-fill teal" style="width: {{ m.precision }}%;"></div></div>
+                </div>
+                <div>
+                    <div style="display:flex; justify-content:space-between; font-size:11px; margin-bottom:2px;">
+                        <span style="color:#64748b;">Recall</span>
+                        <span style="font-weight:700; color:#3b82f6;">{{ m.recall }}%</span>
+                    </div>
+                    <div class="bar-track" style="height:6px;"><div class="bar-fill" style="width: {{ m.recall }}%; background:#3b82f6;"></div></div>
+                </div>
+            </div>
+            {% endfor %}
+            <div style="background:#fef3c7; border-radius:6px; padding:8px 10px; margin-top:8px; font-size:11px; color:#92400e;">⚠ 모델 재훈련 권장 (VIP 예측 모델의 Precision이 70% 미만, 다음 배포 전 튜닝 필요)</div>
+        </div>
+
+    </div>
+</section>
+
+<script>
+window.addEventListener('DOMContentLoaded', function () {
+    var kpiCount = {{ kpi4|length }};
+    AutoRefresh.register({
+        interval: 300000,  // 5분 — ai 지표는 일배치 + ad-hoc 성격
+        fetches: [{
+            url: '/api/ai/kpi4',
+            apply: function (data) {
+                if (!Array.isArray(data)) return;
+                for (var i = 0; i < kpiCount && i < data.length; i++) {
+                    AutoRefresh.setText('ai-kpi-value-' + i, data[i].value || '');
+                    AutoRefresh.setText('ai-kpi-sub-'   + i, data[i].sub   || '');
+                }
+                AutoRefresh.stampNow('ts-ai-kpi');
+            },
+        }],
+    });
+});
+</script>
+{% endblock %}

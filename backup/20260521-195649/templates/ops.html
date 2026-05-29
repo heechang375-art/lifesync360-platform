@@ -1,0 +1,299 @@
+{% extends 'base.html' %}
+{% block title %}Network & Connectivity — Admin{% endblock %}
+
+{% macro vpc_card(c, prefix='') -%}
+<div class="card">
+    <div class="card-title" style="display:flex; align-items:center; justify-content:space-between;">
+        <span>📦 {{ c.title }}</span>
+        {% if c.badge %}<span class="pill" style="background:{{ c.badge_bg }}; color:{{ c.badge_color }};">{{ c.badge }}</span>{% endif %}
+    </div>
+    <div {% if prefix %}id="ops-rows-{{ prefix }}"{% endif %}>
+    {% for it in c.rows %}
+    <div class="vpc-item">
+        <div>
+            <div class="vpc-item-name">{{ it.name }}</div>
+            <div class="vpc-item-sub">{{ it.sub }}</div>
+        </div>
+        {% if it.state %}
+        <span class="vpc-item-state" style="background:#dcfce7; color:{{ it.state_color }};">● {{ it.state }}</span>
+        {% endif %}
+    </div>
+    {% endfor %}
+    </div>
+</div>
+{%- endmacro %}
+
+{% block content %}
+<div class="page-title">Network & Connectivity</div>
+<div class="page-sub">멀티 클라우드 + 온프레미스 네트워크 상태 + AWS · GCP · On-Prem</div>
+
+<!-- AWS 3 VPC -->
+<section class="section">
+    <div class="section-title">📦 AWS VPC <span class="pipe">|</span> <span class="sub">Platform · Data · Group VM</span><span class="ts" id="ts-ops-vpc">갱신: --:--:--</span></div>
+    <div class="grid grid-3">
+        {{ vpc_card(net_platform, 'pf') }}
+        {{ vpc_card(net_data, 'dt') }}
+        {{ vpc_card(net_groupvm, 'gvm') }}
+    </div>
+</section>
+
+<!-- AWS Connectivity / GCP / On-Prem -->
+<section class="section">
+    <div class="section-title">🔗 Connectivity · GCP · On-Prem <span class="pipe">|</span> <span class="sub">TGW · VPN · Local Lab</span><span class="ts" id="ts-ops-conn">갱신: --:--:--</span></div>
+    <div class="grid grid-3">
+        {{ vpc_card(net_conn, 'cn') }}
+        {{ vpc_card(net_gcp, 'gcp') }}
+        {{ vpc_card(net_onprem, 'on') }}
+    </div>
+</section>
+
+<!-- WEARABLE 실시간 — KPI 4 (활성 / 송신율 / RED / YELLOW) -->
+<section class="section">
+    <div class="section-title">❤ WEARABLE 실시간 <span class="pipe">|</span> <span class="sub">(KINESIS · SSE 1s)</span><span class="ts" id="ts-we-kpi">갱신: --:--:--</span></div>
+    <div class="grid grid-4">
+        {% for k in wearable_kpi %}
+        <div class="kpi" style="border-left-color: {{ k.accent }};">
+            <div class="kpi-label">{{ k.label }}</div>
+            <div class="kpi-value" id="we-kpi-value-{{ loop.index0 }}" style="color: {{ k.accent }};">{{ k.value }}</div>
+            <div class="kpi-sub"   id="we-kpi-sub-{{ loop.index0 }}">{{ k.sub }}</div>
+        </div>
+        {% endfor %}
+    </div>
+</section>
+
+<!-- 🔴 건강 RED — AHA/WHO 임상 임계 위반 (즉시 조치) -->
+<section class="section">
+    <div class="section-title" style="color:#dc2626;">🔴 건강 RED <span class="pipe">|</span> <span class="sub">AHA/WHO 임상 임계 — 즉시 조치</span><span class="ts" id="ts-we-red">갱신: --:--:--</span></div>
+    <div class="table-wrap">
+        <table>
+            <thead><tr>
+                <th style="width:80px;">시각</th>
+                <th style="width:120px;">global_id</th>
+                <th style="width:80px;">이름</th>
+                <th style="width:60px; text-align:right;">심박</th>
+                <th style="width:60px; text-align:right;">SpO2</th>
+                <th style="width:70px; text-align:right;">스트레스</th>
+                <th>사유</th>
+            </tr></thead>
+            <tbody id="we-red-tbody">
+                {% for r in wearable_red %}
+                <tr>
+                    <td class="mono">{{ r.time }}</td>
+                    <td class="mono">{{ r.gid }}</td>
+                    <td>{{ r.name }}</td>
+                    <td class="mono" style="text-align:right; color:#dc2626; font-weight:700;">{{ r.hr }}</td>
+                    <td class="mono" style="text-align:right; color:#dc2626;">{{ r.spo2 }}</td>
+                    <td class="mono" style="text-align:right;">{{ r.stress }}</td>
+                    <td style="color:#dc2626;">{{ r.reasons }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<!-- 🟡 건강 YELLOW — 경계 영역 (모니터링) -->
+<section class="section">
+    <div class="section-title" style="color:#d97706;">🟡 건강 YELLOW <span class="pipe">|</span> <span class="sub">경계 영역 — 모니터링</span><span class="ts" id="ts-we-yellow">갱신: --:--:--</span></div>
+    <div class="table-wrap">
+        <table>
+            <thead><tr>
+                <th style="width:80px;">시각</th>
+                <th style="width:120px;">global_id</th>
+                <th style="width:80px;">이름</th>
+                <th style="width:60px; text-align:right;">심박</th>
+                <th style="width:60px; text-align:right;">SpO2</th>
+                <th style="width:70px; text-align:right;">스트레스</th>
+                <th>사유</th>
+            </tr></thead>
+            <tbody id="we-yellow-tbody">
+                {% for r in wearable_yellow %}
+                <tr>
+                    <td class="mono">{{ r.time }}</td>
+                    <td class="mono">{{ r.gid }}</td>
+                    <td>{{ r.name }}</td>
+                    <td class="mono" style="text-align:right;">{{ r.hr }}</td>
+                    <td class="mono" style="text-align:right;">{{ r.spo2 }}</td>
+                    <td class="mono" style="text-align:right;">{{ r.stress }}</td>
+                    <td style="color:#d97706;">{{ r.reasons }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<!-- NETWORK API 엔드포인트 -->
+<section class="section">
+    <div class="section-title">🛰 NETWORK API 엔드포인트</div>
+    {% for e in endpoints %}
+    <div class="endpoint-row">
+        <span class="endpoint-method">{{ e.method }}</span>
+        <span class="endpoint-name">{{ e.name }}</span>
+        <span class="endpoint-desc">{{ e.desc }}</span>
+    </div>
+    {% endfor %}
+</section>
+
+<script>
+window.addEventListener('DOMContentLoaded', function () {
+    var kpiCount = {{ wearable_kpi|length }};
+    var esc = AutoRefresh.escapeHtml;
+
+    function rowHealth(r) {
+        return '<tr>' +
+            '<td class="mono">' + esc(r.time) + '</td>' +
+            '<td class="mono">' + esc(r.gid)  + '</td>' +
+            '<td>' + esc(r.name) + '</td>' +
+            '<td class="mono" style="text-align:right;">' + esc(r.hr)     + '</td>' +
+            '<td class="mono" style="text-align:right;">' + esc(r.spo2)   + '</td>' +
+            '<td class="mono" style="text-align:right;">' + esc(r.stress) + '</td>' +
+            '<td>' + esc(r.reasons) + '</td>' +
+        '</tr>';
+    }
+    AutoRefresh.subscribe('/stream/wearable', function (data) {
+        var kpi = data.kpi || [];
+        for (var i = 0; i < kpiCount && i < kpi.length; i++) {
+            AutoRefresh.setText('we-kpi-value-' + i, kpi[i].value || '');
+            AutoRefresh.setText('we-kpi-sub-'   + i, kpi[i].sub   || '');
+        }
+        AutoRefresh.replaceTbody('we-red-tbody',    (data.red    || []).map(rowHealth).join(''));
+        AutoRefresh.replaceTbody('we-yellow-tbody', (data.yellow || []).map(rowHealth).join(''));
+        AutoRefresh.stampNow('ts-we-kpi');
+        AutoRefresh.stampNow('ts-we-red');
+        AutoRefresh.stampNow('ts-we-yellow');
+    });
+
+    // ── VPC 카드 자동 갱신 (60s) — Connectivity / GroupVM / On-Prem ─────
+    function vpcRowsHtml(rows) {
+        return rows.map(function (it) {
+            var state = it.state
+                ? '<span class="vpc-item-state" style="background:#dcfce7; color:' +
+                  esc(it.state_color || '#16a34a') + ';">● ' + esc(it.state) + '</span>'
+                : '';
+            return '<div class="vpc-item">' +
+                     '<div>' +
+                       '<div class="vpc-item-name">' + esc(it.name) + '</div>' +
+                       '<div class="vpc-item-sub">'  + esc(it.sub || '') + '</div>' +
+                     '</div>' + state +
+                   '</div>';
+        }).join('');
+    }
+
+    AutoRefresh.register({
+        interval: 30000,
+        fetches: [
+            // Connectivity: TGW + VPN 합산
+            {
+                url: '/api/network/tgw',
+                apply: function (tgw) {
+                    if (!tgw || !tgw.id) return;
+                    window.__opsTgw = tgw;
+                    renderConn();
+                },
+            },
+            {
+                url: '/api/network/vpn',
+                apply: function (vpn) {
+                    if (!vpn) return;
+                    window.__opsVpn = vpn;
+                    renderConn();
+                },
+            },
+            // Platform VPC: admin EC2 + ECS
+            {
+                url: '/api/vm/platform',
+                apply: function (data) {
+                    if (!Array.isArray(data)) return;
+                    var rows = data.map(function (i) {
+                        var st = (i.state || '').toLowerCase();
+                        var color = st === 'running' ? '#16a34a' : (st === 'stopped' ? '#dc2626' : '#94a3b8');
+                        var cpu = i.cpu_pct != null ? 'CPU ' + i.cpu_pct + '%' : '';
+                        var mem = i.mem_pct != null ? ' · MEM ' + i.mem_pct + '%' : '';
+                        var sub = (i.vm_id || '-') + (cpu ? ' · ' + cpu + mem : '');
+                        return { name: i.name || i.vm_id || '-', sub: sub, state: i.state || '-', state_color: color };
+                    });
+                    AutoRefresh.replaceTbody('ops-rows-pf', vpcRowsHtml(rows));
+                    AutoRefresh.stampNow('ts-ops-vpc');
+                },
+            },
+            // GroupVM: EC2 7개 list
+            {
+                url: '/api/vm/group',
+                apply: function (data) {
+                    if (!Array.isArray(data)) return;
+                    var rows = data.map(function (i) {
+                        var st = (i.state || '').toLowerCase();
+                        var color = st === 'running' ? '#16a34a' : (st === 'stopped' ? '#dc2626' : '#94a3b8');
+                        var cpu = i.cpu_pct != null ? 'CPU ' + i.cpu_pct + '%' : '';
+                        var mem = i.mem_pct != null ? ' · MEM ' + i.mem_pct + '%' : '';
+                        var sub = (i.vm_id || '-') + (cpu ? ' · ' + cpu + mem : '');
+                        return {
+                            name:        i.name || i.vm_id || '-',
+                            sub:         sub,
+                            state:       i.state || '-',
+                            state_color: color,
+                        };
+                    });
+                    AutoRefresh.replaceTbody('ops-rows-gvm', vpcRowsHtml(rows));
+                    AutoRefresh.stampNow('ts-ops-vpc');
+                },
+            },
+            // On-Prem: Local Lab 환경 list
+            {
+                url: '/api/admin/local-lab-status',
+                apply: function (data) {
+                    var envs = (data && data.environments) || [];
+                    var rows = envs.map(function (e) {
+                        return {
+                            name:        e.env  || e.name || '-',
+                            sub:         e.note || '',
+                            state:       e.state || '-',
+                            state_color: (e.state === 'Running' || e.state === 'Healthy') ? '#16a34a' : '#dc2626',
+                        };
+                    });
+                    AutoRefresh.replaceTbody('ops-rows-on', vpcRowsHtml(rows));
+                    AutoRefresh.stampNow('ts-ops-conn');
+                },
+            },
+            // Data VPC: Kinesis 단일 상태 — 기존 4행 중 Kinesis 행만 갱신 어려워 카드 통째 재구성
+            {
+                url: '/api/kinesis/status',
+                apply: function (data) {
+                    if (!data || !data.StreamDescription) return;
+                    var sd = data.StreamDescription;
+                    var rows = [
+                        {name: 'S3 Raw Bucket', sub: 'lifesync-raw',     state: '',         state_color: ''},
+                        {name: 'Kinesis Stream', sub: sd.StreamName || '-',
+                         state: sd.StreamStatus || '-',
+                         state_color: sd.StreamStatus === 'ACTIVE' ? '#16a34a' : '#dc2626'},
+                        {name: 'Glue ETL',  sub: 'lifesync-etl',  state: '', state_color: ''},
+                        {name: 'EMR',       sub: 'on-demand',     state: '', state_color: ''},
+                    ];
+                    AutoRefresh.replaceTbody('ops-rows-dt', vpcRowsHtml(rows));
+                    AutoRefresh.stampNow('ts-ops-vpc');
+                },
+            },
+        ],
+    });
+
+    function renderConn() {
+        var tgw = window.__opsTgw, vpn = window.__opsVpn;
+        if (!tgw && !vpn) return;
+        var rows = [];
+        if (tgw && tgw.id) {
+            rows.push({name: 'Transit Gateway', sub: tgw.id + ' · attachments ' + (tgw.attachments || 0),
+                       state: tgw.state || '-', state_color: tgw.state === 'available' ? '#16a34a' : '#dc2626'});
+        }
+        if (vpn && Array.isArray(vpn.tunnels)) {
+            var up = vpn.tunnels.filter(function (t) { return (t.status || '').toUpperCase() === 'UP'; }).length;
+            rows.push({name: 'Site to Site VPN', sub: vpn.tunnels.length + ' tunnels',
+                       state: up + ' / ' + vpn.tunnels.length + ' UP',
+                       state_color: up === vpn.tunnels.length ? '#16a34a' : '#f59e0b'});
+        }
+        AutoRefresh.replaceTbody('ops-rows-cn', vpcRowsHtml(rows));
+        AutoRefresh.stampNow('ts-ops-conn');
+    }
+});
+</script>
+{% endblock %}

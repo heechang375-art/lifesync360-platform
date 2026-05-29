@@ -1,0 +1,164 @@
+{% extends 'base.html' %}
+{% block title %}전체 현황 — Admin{% endblock %}
+
+{% block content %}
+<div class="page-title">전체 현황 요약</div>
+<div class="page-sub">LifeSync360 플랫폼 KPI 및 클라우드 인프라 상태</div>
+
+<!-- KPI CARDS — 고객 / 추천 누적 / 실시간 지표 (3×3 = 9, 설계서 V5) -->
+<section class="section">
+    <div class="section-title">📊 KPI CARDS <span class="pipe">|</span> <span class="sub">고객 / 추천 현황</span><span class="ts" id="ts-kpi">갱신: --:--:--</span></div>
+    <div class="grid grid-3">
+        {% for k in kpi %}
+        <div class="kpi" id="kpi-card-{{ loop.index0 }}" style="border-left-color: {{ k.accent }};">
+            <div class="kpi-label">{{ k.label }}</div>
+            {% if k.is_status %}
+            <div class="kpi-value" id="kpi-value-{{ loop.index0 }}" style="font-size:20px; color: {{ k.accent }};">● {{ k.value }}</div>
+            {% else %}
+            <div class="kpi-value" id="kpi-value-{{ loop.index0 }}" style="color: {{ k.accent }};">{{ k.value }}</div>
+            {% endif %}
+            <div class="kpi-sub" id="kpi-sub-{{ loop.index0 }}">{{ k.sub }}</div>
+        </div>
+        {% endfor %}
+    </div>
+</section>
+
+<!-- CLOUD STATUS — 상태 요약 (3카드) -->
+<section class="section">
+    <div class="section-title">☁️ CLOUD STATUS <span class="pipe">|</span> <span class="sub">상태 요약</span><span class="ts" id="ts-cloud">갱신: --:--:--</span></div>
+    <div class="grid grid-3">
+        {% for c in cloud3 %}
+        <div class="cloud-card">
+            <div class="cloud-badge" id="cloud-badge-{{ loop.index0 }}" style="background: {{ c.badge_bg }}; color: {{ c.badge_color }};">{{ c.badge }}</div>
+            <div class="cloud-body">
+                <div class="cloud-title">{{ c.title }}</div>
+                <div class="cloud-state"><span class="dot"></span> <span id="cloud-state-{{ loop.index0 }}">{{ c.state }}</span></div>
+                <div class="cloud-sub" id="cloud-sub-{{ loop.index0 }}">{{ c.sub }}</div>
+                <div class="cloud-details" id="cloud-details-{{ loop.index0 }}">
+                    {% for d in c.details or [] %}
+                    <div class="cloud-detail-row">
+                        <span class="cloud-detail-dot cloud-detail-{{ d.state|lower }}"></span>
+                        <span class="cloud-detail-name">{{ d.name }}</span>
+                        <span class="cloud-detail-note">{{ d.note }}</span>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</section>
+
+<!-- S3 INGESTION — 데이터 적재 현황 (5카드) -->
+<section class="section">
+    <div class="section-title">📦 S3 INGESTION <span class="pipe">|</span> <span class="sub">데이터 적재 현황</span><span class="ts" id="ts-s3">갱신: --:--:--</span></div>
+    <div class="grid grid-5">
+        {% for s in s3_cards %}
+        <div class="s3-card">
+            <div class="s3-icon">{{ s.icon }}</div>
+            <div class="s3-label">{{ s.label }}</div>
+            <div class="s3-value" id="s3-value-{{ loop.index0 }}">{{ s.value }}</div>
+            <div class="s3-note"  id="s3-note-{{ loop.index0 }}">{{ s.note }}</div>
+        </div>
+        {% endfor %}
+    </div>
+</section>
+
+<!-- 최근 업로드 파일 (S3 EventBridge) -->
+<section class="section">
+    <div class="section-title">최근 업로드 파일 (S3 EventBridge)<span class="ts" id="ts-uploads">갱신: --:--:--</span></div>
+    <div class="table-wrap">
+        <table>
+            <tbody id="uploads-tbody">
+                {% for u in uploads %}
+                <tr>
+                    <td class="mono" style="width:90px;">{{ u.time }}</td>
+                    <td class="mono" style="color:#1e293b;">{{ u.file }}</td>
+                    <td style="width:80px; text-align:right;"><span class="pill" style="background:{{ u.badge_bg }}; color:{{ u.badge_color }};">{{ u.badge }}</span></td>
+                    <td class="mono" style="width:80px; text-align:right;">{{ u.size }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<script>
+window.addEventListener('DOMContentLoaded', function () {
+    var kpiCount   = {{ kpi|length }};
+    var cloudCount = {{ cloud3|length }};
+    var s3Count    = {{ s3_cards|length }};
+
+    AutoRefresh.register({
+        interval: 30000,
+        fetches: [
+            {
+                url: '/api/dashboard/summary',
+                apply: function (data) {
+                    if (!Array.isArray(data)) return;
+                    for (var i = 0; i < kpiCount && i < data.length; i++) {
+                        var k = data[i] || {};
+                        var prefix = k.is_status ? '● ' : '';
+                        AutoRefresh.setText('kpi-value-' + i, prefix + (k.value !== undefined ? k.value : ''));
+                        AutoRefresh.setText('kpi-sub-'   + i, k.sub || '');
+                    }
+                    AutoRefresh.stampNow('ts-kpi');
+                },
+            },
+            {
+                url: '/api/dashboard/cloud3',
+                apply: function (data) {
+                    if (!Array.isArray(data)) return;
+                    var esc = AutoRefresh.escapeHtml;
+                    for (var i = 0; i < cloudCount && i < data.length; i++) {
+                        AutoRefresh.setText('cloud-state-' + i, data[i].state || '');
+                        AutoRefresh.setText('cloud-sub-'   + i, data[i].sub   || '');
+                        var details = data[i].details || [];
+                        var html = details.map(function (d) {
+                            var st = (d.state || '').toLowerCase();
+                            return '<div class="cloud-detail-row">' +
+                                '<span class="cloud-detail-dot cloud-detail-' + st + '"></span>' +
+                                '<span class="cloud-detail-name">' + esc(d.name) + '</span>' +
+                                '<span class="cloud-detail-note">' + esc(d.note) + '</span>' +
+                            '</div>';
+                        }).join('');
+                        var el = document.getElementById('cloud-details-' + i);
+                        if (el && el.innerHTML !== html) el.innerHTML = html;
+                    }
+                    AutoRefresh.stampNow('ts-cloud');
+                },
+            },
+            {
+                url: '/api/s3/status',
+                apply: function (data) {
+                    if (!Array.isArray(data)) return;
+                    for (var i = 0; i < s3Count && i < data.length; i++) {
+                        AutoRefresh.setText('s3-value-' + i, data[i].value || '');
+                        AutoRefresh.setText('s3-note-'  + i, data[i].note  || '');
+                    }
+                    AutoRefresh.stampNow('ts-s3');
+                },
+            },
+            {
+                url: '/api/dashboard/uploads',
+                apply: function (data) {
+                    if (!Array.isArray(data)) return;
+                    var esc = AutoRefresh.escapeHtml;
+                    var html = data.map(function (u) {
+                        return '<tr>' +
+                            '<td class="mono" style="width:90px;">' + esc(u.time) + '</td>' +
+                            '<td class="mono" style="color:#1e293b;">' + esc(u.file) + '</td>' +
+                            '<td style="width:80px; text-align:right;"><span class="pill" style="background:' +
+                                esc(u.badge_bg) + '; color:' + esc(u.badge_color) + ';">' + esc(u.badge) + '</span></td>' +
+                            '<td class="mono" style="width:80px; text-align:right;">' + esc(u.size) + '</td>' +
+                        '</tr>';
+                    }).join('');
+                    AutoRefresh.replaceTbody('uploads-tbody', html);
+                    AutoRefresh.stampNow('ts-uploads');
+                },
+            },
+        ],
+    });
+});
+</script>
+{% endblock %}

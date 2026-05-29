@@ -1,0 +1,43 @@
+============================================================
+ CodeCommit push 명령어 (lifesync-legacy-system)
+ - onprem-prod-repo 폴더 기준 (ansible 저장소 루트)
+ - PowerShell에 아래를 순서대로 복사 → 붙여넣기
+ - 전제: aws configure 완료, git 설치
+============================================================
+
+[1] 인증 설정  (최초 1회만)
+------------------------------------------------------------
+git config --global credential.helper '!aws codecommit credential-helper $@'
+git config --global credential.UseHttpPath true
+
+
+[2] 폴더 이동 + git 초기화 + 원격 연결  (최초 1회만)
+------------------------------------------------------------
+cd C:\Users\campus3S026\LS\onprem-prod-repo
+git init
+git branch -M main
+git remote add origin https://git-codecommit.ap-northeast-2.amazonaws.com/v1/repos/lifesync-legacy-system
+
+
+[3] 첫 등록 push
+------------------------------------------------------------
+git add .
+git commit -m "Legacy on-prem ansible 배포 코드 등록"
+git push -u origin main
+
+
+============================================================
+[이후 변경할 때마다]
+------------------------------------------------------------
+cd C:\Users\campus3S026\LS\onprem-prod-repo
+git add .
+git commit -m "변경 내용 설명"
+git push
+
+
+============================================================
+[push 확인]
+------------------------------------------------------------
+git log --oneline
+aws codecommit get-branch --repository-name lifesync-legacy-system --branch-name main
+============================================================
