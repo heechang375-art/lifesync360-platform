@@ -102,7 +102,8 @@ DDB_SEGMENT_TABLE    = os.environ.get('DDB_SEGMENT_TABLE',    'analytics_segment
 DDB_DEMOGRAPHIC_TABLE= os.environ.get('DDB_DEMOGRAPHIC_TABLE','analytics_demographic_information')
 AWS_REGION           = os.environ.get('AWS_REGION', 'ap-northeast-2')
 ONPREM_QUERY_LAMBDA  = os.environ.get('ONPREM_QUERY_LAMBDA', 'lifesync-onprem-customer-query')
-ONPREM_BASE_URL      = os.environ.get('ONPREM_BASE_URL', 'http://172.16.1.73')
+ONPREM_BASE_URL      = os.environ.get('ONPREM_BASE_URL', 'http://192.168.45.157')
+SKIP_CLOUD           = os.environ.get('SKIP_CLOUD', '').lower() == 'true'
 
 GRADES = ['VIP', 'GOLD', 'SILVER', 'BASIC', 'CARE']
 CONSENT_LABELS = {
@@ -293,6 +294,15 @@ def _boto(service):
 
 def _ping_cloud_status():
     """Cloud Status 카드 — AWS 리소스 6종 describe."""
+    if SKIP_CLOUD:
+        return [
+            {'service': 'AWS Aurora',      'state': 'UP',  'note': '2/2 clusters available'},
+            {'service': 'AWS DynamoDB',     'state': 'UP',  'note': '3 tables'},
+            {'service': 'AWS ElastiCache',  'state': 'UP',  'note': '1/1 clusters'},
+            {'service': 'AWS ECS',          'state': 'UP',  'note': '1 clusters'},
+            {'service': 'AWS ALB',          'state': 'UP',  'note': '1/1 active'},
+            {'service': 'AWS S3',           'state': 'UP',  'note': '3 buckets'},
+        ]
     out = []
     try:
         clusters = _boto('rds').describe_db_clusters().get('DBClusters', [])
@@ -342,6 +352,13 @@ def _ping_s3_ingestion():
     전체 객체 수는 CloudWatch S3 NumberOfObjects metric (일배치, 1일 지연).
     today/iot/latest 는 도메인 prefix 별 MaxKeys=1000 조회 (페이지네이션 회피).
     """
+    if SKIP_CLOUD:
+        return {
+            'raw_bucket_files': 284712, 'today_ingested': 1243, 'iot_count': 892,
+            'total_size_bytes': 2_840_000_000, 'processed_count': 87, 'curated_count': 5,
+            'last_upload': {'time': '11:24', 'file': 'wearable_2026-05-29.json', 'size_mb': 2.1},
+            'failed_count': 0,
+        }
     raw_bucket = os.environ.get('LIFESYNC_RAW_S3_BUCKET', 'lifesync-raw')
     from datetime import datetime, timezone, timedelta
     today_date = datetime.now(timezone(timedelta(hours=9))).date()  # KST 기준
@@ -422,6 +439,14 @@ def _ping_vm_status():
     lifesync-*-vpc 동적 발견 → 해당 VPC 내 EC2 만 매칭.
     group/wearable 구분은 VPC Name 키워드로 결정 (deploy_group 필드).
     """
+    if SKIP_CLOUD:
+        return [
+            {'vm_id': 'i-0aaa000111222001', 'name': 'lifesync-group-app-01',    'state': 'running', 'deploy_group': 'group-app',    'vpc': 'lifesync-group-vpc',      'cpu_pct': 12.3, 'mem_pct': 44.1},
+            {'vm_id': 'i-0aaa000111222002', 'name': 'lifesync-group-app-02',    'state': 'running', 'deploy_group': 'group-app',    'vpc': 'lifesync-group-vpc',      'cpu_pct': 9.8,  'mem_pct': 41.7},
+            {'vm_id': 'i-0aaa000111222003', 'name': 'lifesync-wearable-app-01', 'state': 'running', 'deploy_group': 'wearable-app', 'vpc': 'lifesync-wearable-vpc',   'cpu_pct': 8.2,  'mem_pct': 38.5},
+            {'vm_id': 'i-0aaa000111222004', 'name': 'lifesync-platform-app-01', 'state': 'running', 'deploy_group': 'platform',     'vpc': 'lifesync-lifesync-vpc',   'cpu_pct': 24.6, 'mem_pct': 52.3},
+            {'vm_id': 'i-0aaa000111222005', 'name': 'lifesync-admin-ec2',       'state': 'running', 'deploy_group': 'management',   'vpc': 'lifesync-management-vpc', 'cpu_pct': 5.1,  'mem_pct': 31.2},
+        ]
     try:
         ec2  = _boto('ec2')
         vpcs = ec2.describe_vpcs(Filters=[
@@ -535,6 +560,8 @@ def _list_lifesync_lambdas():
 
 def _ping_glue_last_run():
     """Glue Job 최근 run."""
+    if SKIP_CLOUD:
+        return {'job_name': 'lifesync-etl', 'state': 'SUCCEEDED', 'started_at': '2026-05-29 03:00:12', 'completed_at': '2026-05-29 03:42:08', 'duration_sec': 2516}
     job = os.environ.get('GLUE_JOB_PHYSICAL_NAME', 'lifesync-etl')
     try:
         runs = _boto('glue').get_job_runs(JobName=job, MaxResults=1).get('JobRuns', [])
@@ -554,6 +581,8 @@ def _ping_glue_last_run():
 
 # ── 멀티클라우드 — TGW / VPN ping ───────────
 def _ping_tgw():
+    if SKIP_CLOUD:
+        return {'id': 'tgw-07aff02d25c808e1f', 'state': 'available', 'attachments': 4, 'note': 'LifeSync TGW'}
     try:
         tgws = _boto('ec2').describe_transit_gateways().get('TransitGateways', [])
         if not tgws:
@@ -619,6 +648,8 @@ def _ping_kinesis():
     INGESTION_STREAM_NAME (default 'lifesync-kinesis-wearable-stream') 단건 조회.
     실패/스트림 없음 시 빈 dict.
     """
+    if SKIP_CLOUD:
+        return {'stream_name': 'lifesync-kinesis-wearable-stream', 'status': 'ACTIVE', 'shard_count': 2, 'retention_hrs': 24, 'iterator_age_avg_ms': 145}
     from datetime import datetime, timezone, timedelta
     stream = os.environ.get('INGESTION_STREAM_NAME', 'lifesync-kinesis-wearable-stream')
     try:
@@ -653,6 +684,16 @@ def _ping_wearable_metrics():
     P4 r45~r52. Wearable custom namespace 'LifeSync/Wearable' 5분 평균.
     metrics: heart_rate / blood_pressure_sys / blood_pressure_dia / spo2 / steps / alerts.
     """
+    if SKIP_CLOUD:
+        return [
+            {'metric': 'heart_rate',         'label': '심박수',    'avg': 74.2,  'sum': 4452.0},
+            {'metric': 'blood_pressure_sys',  'label': '수축기혈압', 'avg': 118.4, 'sum': 7104.0},
+            {'metric': 'blood_pressure_dia',  'label': '이완기혈압', 'avg': 76.1,  'sum': 4566.0},
+            {'metric': 'spo2',                'label': '산소포화도', 'avg': 98.3,  'sum': 5898.0},
+            {'metric': 'steps',               'label': '걸음수',    'avg': 312.0, 'sum': 18720.0},
+            {'metric': 'activity_kcal',       'label': '활동칼로리', 'avg': 8.4,   'sum': 504.0},
+            {'metric': 'alerts',              'label': '이상이벤트', 'avg': 0.0,   'sum': 0.0},
+        ]
     from datetime import datetime, timezone, timedelta
     try:
         cw    = _boto('cloudwatch')
@@ -691,6 +732,8 @@ def _ping_emr():
     """
     P4 r13. EMR 클러스터 상태 (lifesync 태그 또는 RUNNING/WAITING).
     """
+    if SKIP_CLOUD:
+        return [{'cluster_id': 'j-MOCK1234ABCD', 'name': 'lifesync-emr', 'state': 'WAITING', 'state_change_at': ''}]
     try:
         clusters = _boto('emr').list_clusters(
             ClusterStates=['STARTING','BOOTSTRAPPING','RUNNING','WAITING','TERMINATING']
@@ -823,6 +866,12 @@ def _stub_gcp_status():
     P4 r32~36 — GCP BigQuery / Vertex AI / Cloud Run 상태.
     Cloud Monitoring API 로 service 별 uptime/health 조회. 인증/호출 실패 시 빈 list.
     """
+    if SKIP_CLOUD:
+        return [
+            {'service': 'BigQuery',  'state': 'UP', 'series_count': 3},
+            {'service': 'Vertex AI', 'state': 'UP', 'series_count': 1},
+            {'service': 'Cloud Run', 'state': 'UP', 'series_count': 2},
+        ]
     if not _gcp_project():
         return []
     if not _gcp_reachable():
