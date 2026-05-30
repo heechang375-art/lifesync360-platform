@@ -441,11 +441,15 @@ def _ping_vm_status():
     """
     if SKIP_CLOUD:
         return [
-            {'vm_id': 'i-0aaa000111222001', 'name': 'lifesync-group-app-01',    'state': 'running', 'deploy_group': 'group-app',    'vpc': 'lifesync-group-vpc',      'cpu_pct': 12.3, 'mem_pct': 44.1},
-            {'vm_id': 'i-0aaa000111222002', 'name': 'lifesync-group-app-02',    'state': 'running', 'deploy_group': 'group-app',    'vpc': 'lifesync-group-vpc',      'cpu_pct': 9.8,  'mem_pct': 41.7},
-            {'vm_id': 'i-0aaa000111222003', 'name': 'lifesync-wearable-app-01', 'state': 'running', 'deploy_group': 'wearable-app', 'vpc': 'lifesync-wearable-vpc',   'cpu_pct': 8.2,  'mem_pct': 38.5},
-            {'vm_id': 'i-0aaa000111222004', 'name': 'lifesync-platform-app-01', 'state': 'running', 'deploy_group': 'platform',     'vpc': 'lifesync-lifesync-vpc',   'cpu_pct': 24.6, 'mem_pct': 52.3},
-            {'vm_id': 'i-0aaa000111222005', 'name': 'lifesync-admin-ec2',       'state': 'running', 'deploy_group': 'management',   'vpc': 'lifesync-management-vpc', 'cpu_pct': 5.1,  'mem_pct': 31.2},
+            {'vm_id': 'i-0aaa000111222001', 'name': 'group-bank-ec2',            'state': 'running', 'deploy_group': 'group-app',    'vpc': 'lifesync-dev-group-vpc',      'cpu_pct': 12.3, 'mem_pct': 44.1},
+            {'vm_id': 'i-0aaa000111222002', 'name': 'group-card-ec2',            'state': 'running', 'deploy_group': 'group-app',    'vpc': 'lifesync-dev-group-vpc',      'cpu_pct': 9.8,  'mem_pct': 41.7},
+            {'vm_id': 'i-0aaa000111222003', 'name': 'group-securities-ec2',      'state': 'running', 'deploy_group': 'group-app',    'vpc': 'lifesync-dev-group-vpc',      'cpu_pct': 7.4,  'mem_pct': 38.2},
+            {'vm_id': 'i-0aaa000111222004', 'name': 'group-insurance-ec2',       'state': 'running', 'deploy_group': 'group-app',    'vpc': 'lifesync-dev-group-vpc',      'cpu_pct': 11.2, 'mem_pct': 42.8},
+            {'vm_id': 'i-0aaa000111222005', 'name': 'group-online-insurance-ec2','state': 'running', 'deploy_group': 'group-app',    'vpc': 'lifesync-dev-group-vpc',      'cpu_pct': 8.6,  'mem_pct': 40.3},
+            {'vm_id': 'i-0aaa000111222006', 'name': 'group-healthcare-ec2',      'state': 'running', 'deploy_group': 'group-app',    'vpc': 'lifesync-dev-group-vpc',      'cpu_pct': 6.1,  'mem_pct': 35.9},
+            {'vm_id': 'i-0aaa000111222007', 'name': 'group-hospital-ec2',        'state': 'running', 'deploy_group': 'group-app',    'vpc': 'lifesync-dev-group-vpc',      'cpu_pct': 5.8,  'mem_pct': 33.4},
+            {'vm_id': 'i-0aaa000111222008', 'name': 'wearable-ec2',              'state': 'running', 'deploy_group': 'wearable-app', 'vpc': 'lifesync-dev-wearable-vpc',   'cpu_pct': 8.2,  'mem_pct': 38.5},
+            {'vm_id': 'i-0cf66b64cba27db8f','name': 'lifesync-dev-admin-ec2',   'state': 'running', 'deploy_group': 'management',   'vpc': 'lifesync-dev-management-vpc', 'cpu_pct': 5.1,  'mem_pct': 31.2},
         ]
     try:
         ec2  = _boto('ec2')
@@ -1833,6 +1837,13 @@ def _stub_aurora_summary():
             pass
 
     cards = [dict(c, value='-') for c in _DASH_KPI_CARDS]
+
+    if SKIP_CLOUD:
+        cards[3]['value'] = 'Vertex AI';  cards[3]['sub'] = 'DynamoDB · mock 데이터'
+        cards[4]['value'] = '1,284,310';  cards[5]['value'] = '12.8M'
+        cards[6]['value'] = '34.2%';      cards[7]['value'] = '8.7%'
+        cards[8]['value'] = '1,024'
+        return cards
 
     # KPI 1~3: On-Prem Lambda (VPN 연결 필요) — TTL 캐시 + 병렬 호출
     import concurrent.futures as _cf
