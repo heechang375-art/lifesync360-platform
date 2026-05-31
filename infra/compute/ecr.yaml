@@ -1,0 +1,33 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: LifeSync360 ECR Repositories
+
+Resources:
+  PlatformRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: lifesync360-platform
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {"rules":[{"rulePriority":1,"description":"Keep last 10","selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":10},"action":{"type":"expire"}}]}
+
+  AdminRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: lifesync360-admin
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {"rules":[{"rulePriority":1,"description":"Keep last 10","selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":10},"action":{"type":"expire"}}]}
+
+Outputs:
+  PlatformRepoUri:
+    Value: !GetAtt PlatformRepo.RepositoryUri
+    Export:
+      Name: lifesync-ecr-PlatformRepoUri
+  AdminRepoUri:
+    Value: !GetAtt AdminRepo.RepositoryUri
+    Export:
+      Name: lifesync-ecr-AdminRepoUri

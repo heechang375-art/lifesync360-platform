@@ -1,0 +1,218 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: 14b Ansible 제어 노드 EC2 + UserData만. IAM은 14a-ansible-iam 스택 먼저 배포 후 출력 AnsibleControlNodeInstanceProfileName 을 넘기면 됨 — 부트스트랩 오류와 IAM 오류 분리.
+Parameters:
+  ProjectName:
+    Type: String
+    Default: lifesync
+  Environment:
+    Type: String
+    Default: dev
+  AmiId: {Type: AWS::EC2::Image::Id}
+  InstanceType: {Type: String}
+  ManagementSubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Management VPC private subnet only. NAT Gateway 불필요 — 01c-management-vpc-endpoints 스택(SSM + CodeCommit VPC Endpoints) 배포 후 인터넷 없이 접근 가능.
+  ManagementSgId: {Type: AWS::EC2::SecurityGroup::Id}
+  AnsibleControlNodeInstanceProfileName:
+    Type: String
+    Description: 14a-ansible-iam 스택 출력 AnsibleControlNodeInstanceProfileName 과 동일한 값(물리 인스턴스 프로파일 이름).
+  OnpremCodeCommitRepositoryName:
+    Type: String
+    Default: onprem-prod-repo
+    Description: CodeCommit repository name for LifeSync360 on-prem Ansible playbooks (GitPull IAM scoped to this repo).
+  BootstrapOnpremRepoClone:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "true"
+    Description: "false = skip git clone (repo missing or manual clone). Vault secrets remain manual on the node per onprem README."
+  VpnPushOnpremHost:
+    Type: String
+    Default: ""
+    Description: "비우면 UserData VPN wait_for 점검 스킵. 값이 있으면 부팅 마지막에 ansible wait_for 로 TCP 응답 확인(15s)."
+  VpnPushOnpremSshPort:
+    Type: String
+    Default: "22"
+    Description: VPN 점검 대상 SSH 포트 (VpnPushOnpremHost 비어 있으면 미사용).
+
+Resources:
+  AnsibleControlNode:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: !Ref InstanceType
+      SubnetId: !Ref ManagementSubnetId
+      SecurityGroupIds: [!Ref ManagementSgId]
+      IamInstanceProfile: !Ref AnsibleControlNodeInstanceProfileName
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-${Environment}-management-ec2-ansible
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euo pipefail
+
+          # 로그: POSIX 리다이렉트만 사용. cloud-init part-001 이 /bin/sh 로 돌 때도 bash 전용 리다이렉트·조건문 없음.
+          touch /var/log/ansible-bootstrap.log || true
+          chmod 0644 /var/log/ansible-bootstrap.log || true
+          exec >/var/log/ansible-bootstrap.log 2>&1
+
+          # 로그 직후: ansible 유저·sudo
+          if ! id ansible >/dev/null 2>&1; then
+            useradd -m -s /bin/bash ansible
+          fi
+          usermod -aG sudo ansible 2>/dev/null || usermod -aG wheel ansible 2>/dev/null || true
+          # sudoers: 셸에 괄호 문자열을 직접 쓰지 않음. base64 디코드 결과는 ansible ALL=(ALL) NOPASSWD:ALL 한 줄.
+          printf '%s' 'YW5zaWJsZSBBTEw9KEFMTCkgTk9QQVNTV0Q6QUxM' | base64 -d >/etc/sudoers.d/ansible
+          printf '\n' >>/etc/sudoers.d/ansible
+          chmod 0440 /etc/sudoers.d/ansible
+          install -d -m 0755 -o ansible -g ansible /opt/ansible /var/lib/legacy-system /home/ansible/.local/bin
+
+          # Fn::Sub: $$ 는 셸에서 단일 $ 로 치환됨. log/err 는 명령치환 없음 — dash/cloud-init part-001 호환
+          log() {
+            echo "[bootstrap]" "$$@"
+          }
+          err() {
+            echo "[bootstrap ERROR]" "$$@" >&2
+          }
+
+          # --- CodeCommit credential helper (printf만 사용, heredoc 들여쓰기 이슈 없음) ---
+          printf '%s\n' '#!/bin/bash' 'exec aws codecommit credential-helper "$$@"' >/home/ansible/.local/bin/aws-codecommit-credential-helper
+          chmod 0755 /home/ansible/.local/bin/aws-codecommit-credential-helper
+          chown ansible:ansible /home/ansible/.local/bin/aws-codecommit-credential-helper
+
+          # --- 패키지 + /opt/ansible-venv (시스템 Python에 pip 설치하지 않음, PEP 668 회피) ---
+          if command -v dnf >/dev/null 2>&1; then
+            log "패키지 설치(AL2023 dnf)…"
+            dnf install -y aws-cli python3.11 python3.11-devel gcc openssl-devel git openssh-clients wget unzip jq sudo
+            systemctl enable amazon-ssm-agent || true
+            systemctl start amazon-ssm-agent || true
+            if [ ! -x /opt/ansible-venv/bin/python ]; then
+              python3.11 -m venv /opt/ansible-venv
+            fi
+            /opt/ansible-venv/bin/python -m pip install -U pip setuptools wheel
+            /opt/ansible-venv/bin/pip install "ansible-core>=2.18,<2.19"
+            ln -sf /opt/ansible-venv/bin/ansible /usr/local/bin/ansible
+            ln -sf /opt/ansible-venv/bin/ansible-playbook /usr/local/bin/ansible-playbook
+            chown -R ansible:ansible /opt/ansible-venv
+          elif command -v apt-get >/dev/null 2>&1; then
+            export DEBIAN_FRONTEND=noninteractive
+            log "패키지 설치(Debian/Ubuntu apt)…"
+            for _au in 1 2 3 4 5; do
+              apt-get update -y && break
+              err "apt-get update attempt $$_au failed; retry 8s..."
+              sleep 8
+            done
+            apt-get install -y software-properties-common sudo ca-certificates curl wget unzip jq git openssh-client
+            if ! systemctl is-active amazon-ssm-agent >/dev/null 2>&1; then
+              if command -v snap >/dev/null 2>&1 && snap list amazon-ssm-agent >/dev/null 2>&1; then
+                snap start amazon-ssm-agent || true
+              else
+                _deb=/tmp/amazon-ssm-agent.deb
+                curl -fsSL -o "$$_deb" "https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/debian_amd64/amazon-ssm-agent.deb" || wget -q -O "$$_deb" "https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/debian_amd64/amazon-ssm-agent.deb"
+                dpkg -i "$$_deb" || apt-get install -f -y
+              fi
+              systemctl enable amazon-ssm-agent
+              systemctl restart amazon-ssm-agent
+            fi
+            if ! apt-cache show python3.11 >/dev/null 2>&1; then
+              add-apt-repository -y ppa:deadsnakes/ppa
+              for _au in 1 2 3 4 5; do
+                apt-get update -y && break
+                sleep 8
+              done
+            fi
+            apt-get install -y python3.11 python3.11-venv python3.11-dev
+            if [ ! -x /opt/ansible-venv/bin/python ]; then
+              python3.11 -m venv /opt/ansible-venv
+            fi
+            /opt/ansible-venv/bin/python -m pip install -U pip setuptools wheel
+            /opt/ansible-venv/bin/pip install "ansible-core>=2.18,<2.19"
+            ln -sf /opt/ansible-venv/bin/ansible /usr/local/bin/ansible
+            ln -sf /opt/ansible-venv/bin/ansible-playbook /usr/local/bin/ansible-playbook
+            chown -R ansible:ansible /opt/ansible-venv
+            if ! command -v aws >/dev/null 2>&1; then
+              err "apt: aws CLI 없음 — CodeCommit 은 AWS CLI v2 수동 설치 검토"
+            fi
+          elif command -v yum >/dev/null 2>&1; then
+            log "패키지 설치(Amazon Linux 2 yum)…"
+            yum install -y awscli python3 python3-devel gcc openssl-devel git openssh-clients wget unzip jq sudo
+            systemctl enable amazon-ssm-agent || true
+            systemctl start amazon-ssm-agent || true
+            if [ ! -x /opt/ansible-venv/bin/python ]; then
+              python3 -m venv /opt/ansible-venv
+            fi
+            /opt/ansible-venv/bin/python -m pip install -U pip setuptools wheel
+            /opt/ansible-venv/bin/pip install "ansible-core>=2.15,<2.16"
+            ln -sf /opt/ansible-venv/bin/ansible /usr/local/bin/ansible
+            ln -sf /opt/ansible-venv/bin/ansible-playbook /usr/local/bin/ansible-playbook
+            chown -R ansible:ansible /opt/ansible-venv
+          else
+            err "지원 패키지 관리자 없음 (dnf/apt/yum). Ansible 수동 설치."
+            exit 1
+          fi
+
+          command -v ansible >/dev/null 2>&1 || { err "ansible 없음 (/usr/local/bin/ansible 심볼릭 링크 확인)"; exit 1; }
+
+          chown ansible:ansible /opt/ansible
+
+          install -d -m 0700 -o ansible -g ansible /home/ansible/.ssh
+          if [ ! -f /home/ansible/.ssh/id_rsa ]; then
+            sudo -u ansible ssh-keygen -t rsa -b 4096 -N "" -f /home/ansible/.ssh/id_rsa -q
+          fi
+          chmod 700 /home/ansible/.ssh
+          chmod 600 /home/ansible/.ssh/id_rsa 2>/dev/null || true
+          chmod 644 /home/ansible/.ssh/id_rsa.pub 2>/dev/null || true
+          chown -R ansible:ansible /home/ansible/.ssh
+
+          # --- LifeSync360 onprem-prod-repo (멱등) ---
+          if [ "${BootstrapOnpremRepoClone}" = "true" ]; then
+            sudo -u ansible /usr/bin/git config --global credential.helper /home/ansible/.local/bin/aws-codecommit-credential-helper
+            sudo -u ansible /usr/bin/git config --global credential.UseHttpPath true
+            if [ ! -d /opt/ansible/onprem-prod-repo/.git ]; then
+              _clone_ok=0
+              for _c in 1 2 3 4 5; do
+                if sudo -u ansible /usr/bin/git clone "https://git-codecommit.${AWS::Region}.amazonaws.com/v1/repos/${OnpremCodeCommitRepositoryName}" /opt/ansible/onprem-prod-repo; then
+                  _clone_ok=1
+                  break
+                fi
+                err "git clone CodeCommit attempt $$_c failed; retry 10s (NAT/VPN/IAM?)"
+                sleep 10
+              done
+              if [ "$$_clone_ok" -ne 1 ]; then
+                err "git clone 최종 실패 — 수동 클론 후 재부트스트랩"
+                exit 1
+              fi
+            else
+              log "/opt/ansible/onprem-prod-repo 존재 — clone 스킵"
+            fi
+          else
+            log "BootstrapOnpremRepoClone=false — clone 스킵"
+          fi
+
+          sudo -u ansible sh -c 'printf "%s\n" "all:" "  vars:" "    ansible_ssh_private_key_file: ~/.ssh/id_rsa" > /home/ansible/hosts.yaml'
+          chown ansible:ansible /home/ansible/hosts.yaml
+          chmod 644 /home/ansible/hosts.yaml
+
+          # --- VPN 연결성: ansible wait_for (sudo -u ansible, 타임아웃 15s). Host 비우면 스킵 ---
+          if [ -n "${VpnPushOnpremHost}" ]; then
+            log "VPN 점검: wait_for host=${VpnPushOnpremHost} port=${VpnPushOnpremSshPort} timeout=15s (ansible 유저)"
+            if sudo -u ansible env HOME=/home/ansible ANSIBLE_PYTHON_INTERPRETER=/opt/ansible-venv/bin/python \
+              /opt/ansible-venv/bin/ansible localhost -m wait_for \
+              -a "host=${VpnPushOnpremHost} port=${VpnPushOnpremSshPort} timeout=15 delay=0 state=started"; then
+              log "VPN 점검: 성공 (${VpnPushOnpremHost}:${VpnPushOnpremSshPort})"
+            else
+              err "VPN 점검: 실패 또는 타임아웃 (비치명 — 라우팅·SG·온프렘 방화벽 확인)"
+            fi
+          else
+            log "VPN 점검 스킵 (VpnPushOnpremHost 비어 있음)"
+          fi
+
+          log "14b 완료: venv·키·hosts.yaml·(선택)VPN 점검. SSM 공개키·SendCommand·VPN 키 푸시는 14c-ansible-key-publish 가 SSM 문서로 실행합니다."
+
+Outputs:
+  AnsibleControlInstanceId:
+    Description: Ansible control node instance ID
+    Value: !Ref AnsibleControlNode
+  AnsiblePublicKeyParameterName:
+    Description: SSM parameter containing ansible users SSH public key (for legacy authorized_keys)
+    Value: !Sub /${ProjectName}/${Environment}/ansible/public-key

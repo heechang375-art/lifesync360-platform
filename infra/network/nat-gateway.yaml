@@ -1,0 +1,41 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: LifeSync360 NAT Gateways (2 AZ — app/data private outbound)
+
+Resources:
+  Eip1:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  Eip2:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NatGw1:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt Eip1.AllocationId
+      SubnetId: !ImportValue lifesync-subnets-PublicSubnet1Id
+      Tags:
+        - Key: Name
+          Value: lifesync-nat-2a
+
+  NatGw2:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt Eip2.AllocationId
+      SubnetId: !ImportValue lifesync-subnets-PublicSubnet2Id
+      Tags:
+        - Key: Name
+          Value: lifesync-nat-2c
+
+Outputs:
+  NatGw1Id:
+    Value: !Ref NatGw1
+    Export:
+      Name: lifesync-nat-NatGw1Id
+  NatGw2Id:
+    Value: !Ref NatGw2
+    Export:
+      Name: lifesync-nat-NatGw2Id

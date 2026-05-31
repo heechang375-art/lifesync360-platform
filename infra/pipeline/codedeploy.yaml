@@ -1,0 +1,50 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: LifeSync360 CodeDeploy — ECS Blue/Green (platform)
+
+Resources:
+  DeployApp:
+    Type: AWS::CodeDeploy::Application
+    Properties:
+      ApplicationName: lifesync-deploy
+      ComputePlatform: ECS
+
+  PlatformDeploymentGroup:
+    Type: AWS::CodeDeploy::DeploymentGroup
+    Properties:
+      ApplicationName: !Ref DeployApp
+      DeploymentGroupName: lifesync-platform-dg
+      ServiceRoleArn: !Sub arn:aws:iam::${AWS::AccountId}:role/lifesync-codedeploy-role
+      DeploymentConfigName: CodeDeployDefault.ECSAllAtOnce
+      DeploymentStyle:
+        DeploymentType: BLUE_GREEN
+        DeploymentOption: WITH_TRAFFIC_CONTROL
+      BlueGreenDeploymentConfiguration:
+        TerminateBlueInstancesOnDeploymentSuccess:
+          Action: TERMINATE
+          TerminationWaitTimeInMinutes: 5
+        DeploymentReadyOption:
+          ActionOnTimeout: CONTINUE_DEPLOYMENT
+      LoadBalancerInfo:
+        TargetGroupPairInfoList:
+          - ProdTrafficRoute:
+              ListenerArns:
+                - !ImportValue lifesync-alb-HttpListenerArn
+            TestTrafficRoute:
+              ListenerArns:
+                - !ImportValue lifesync-alb-TestListenerArn
+            TargetGroups:
+              - Name: lifesync-tg-platform
+              - Name: lifesync-tg-platform-green
+      ECSServices:
+        - ClusterName: !ImportValue lifesync-ecs-ClusterName
+          ServiceName: lifesync-platform-service
+
+Outputs:
+  DeployAppName:
+    Value: !Ref DeployApp
+    Export:
+      Name: lifesync-codedeploy-AppName
+  PlatformDgName:
+    Value: !Ref PlatformDeploymentGroup
+    Export:
+      Name: lifesync-codedeploy-PlatformDgName

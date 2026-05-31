@@ -1,0 +1,105 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: 14a Ansible 제어 노드 IAM만 (역할 + 인스턴스 프로파일). EC2·UserData는 14b-ansible-ec2 — IAM 오류와 부트스트랩 오류 분리 진단용.
+Parameters:
+  ProjectName:
+    Type: String
+    Default: lifesync
+  Environment:
+    Type: String
+    Default: dev
+  OnpremCodeCommitRepositoryName:
+    Type: String
+    Default: onprem-prod-repo
+    Description: CodeCommit repository name for GitPull IAM scope.
+  AdditionalCodeCommitRepositoryName:
+    Type: String
+    Default: ""
+    Description: Optional second CodeCommit repository name. Empty = IAM allows only OnpremCodeCommitRepositoryName.
+
+Conditions:
+  HasAdditionalCodeCommitRepo: !Not [!Equals [!Ref AdditionalCodeCommitRepositoryName, ""]]
+
+Resources:
+  AnsibleControlNodeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: AnsibleCodeCommitGitPull
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - codecommit:GitPull
+                  - codecommit:GetRepository
+                  - codecommit:GetBranch
+                Resource: !If
+                  - HasAdditionalCodeCommitRepo
+                  - - !Sub arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${OnpremCodeCommitRepositoryName}
+                    - !Sub arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${AdditionalCodeCommitRepositoryName}
+                  - !Sub arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${OnpremCodeCommitRepositoryName}
+        - PolicyName: AnsiblePublishPublicKeyToSsm
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:PutParameter
+                Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ProjectName}/${Environment}/ansible/*
+        - PolicyName: AnsibleSsmSendCommandAppendPubkey
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:SendCommand
+                Resource:
+                  - !Sub arn:aws:ssm:${AWS::Region}::document/AWS-RunShellScript
+                  - !Sub arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:managed-instance/*
+              - Effect: Allow
+                Action:
+                  - ssm:GetCommandInvocation
+                  - ssm:ListCommandInvocations
+                Resource: "*"
+        - PolicyName: AnsibleReadVpnBootstrapSshKey
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ProjectName}/${Environment}/ansible/vpn-bootstrap-private-key
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    kms:ViaService: !Sub ssm.${AWS::Region}.amazonaws.com
+
+  AnsibleControlNodeInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref AnsibleControlNodeRole
+
+Outputs:
+  AnsibleControlNodeInstanceProfileName:
+    Description: Pass to 14b-ansible-ec2 parameter AnsibleControlNodeInstanceProfileName (CloudFormation Ref = physical profile name).
+    Value: !Ref AnsibleControlNodeInstanceProfile
+  AnsibleControlNodeRoleArn:
+    Description: IAM role ARN (참고·외부 연동용).
+    Value: !GetAtt AnsibleControlNodeRole.Arn
+  AnsibleControlNodeInstanceProfileArn:
+    Description: Instance profile ARN (참고용).
+    Value: !GetAtt AnsibleControlNodeInstanceProfile.Arn

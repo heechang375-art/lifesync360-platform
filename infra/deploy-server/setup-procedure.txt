@@ -1,0 +1,127 @@
+EC2 Control Node Deploy Server 설치 절차
+=========================================
+
+■ 개요
+  - on-prem private_api(ls-api)에서 배포 트리거 요청을 받아
+    EC2 Control Node에서 ansible-playbook을 실행하는 서버
+  - 포트: 9000
+  - 토큰: X-Deploy-Token 헤더로 인증
+
+■ 사전 조건
+  - EC2 Control Node에 Ansible 설치 및 레포 클론 완료
+  - /home/ubuntu/.vault_pass 파일 존재
+  - /opt/ansible/onprem-prod-repo/ansible/site.yml 존재
+  - Secrets Manager에 lifesync/deploy-token 등록 ({"token": "<값>"})
+
+─────────────────────────────────────────
+1단계: 파일 전송 (로컬 PC → EC2)
+─────────────────────────────────────────
+
+  scp deploy_server.py ubuntu@<EC2-IP>:/tmp/
+  scp deploy-server.service ubuntu@<EC2-IP>:/tmp/
+
+─────────────────────────────────────────
+2단계: EC2에서 서버 설치
+─────────────────────────────────────────
+
+  # 디렉토리 생성
+  sudo mkdir -p /opt/deploy-server /etc/deploy-server
+  sudo chown ubuntu:ubuntu /opt/deploy-server
+  cp /tmp/deploy_server.py /opt/deploy-server/
+
+  # Secrets Manager에서 토큰 가져와서 env 파일 생성
+  DEPLOY_TOKEN=$(aws secretsmanager get-secret-value \
+    --secret-id lifesync/deploy-token \
+    --region ap-northeast-2 \
+    --query SecretString --output text \
+    | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+  echo "DEPLOY_TOKEN=${DEPLOY_TOKEN}" | sudo tee /etc/deploy-server/env > /dev/null
+  sudo chmod 600 /etc/deploy-server/env
+
+  # Python 가상환경 및 패키지 설치
+  python3 -m venv /opt/deploy-server/venv
+  /opt/deploy-server/venv/bin/pip install flask
+
+  # systemd 서비스 등록
+  sudo cp /tmp/deploy-server.service /etc/systemd/system/
+  sudo systemctl daemon-reload
+  sudo systemctl enable deploy-server
+  sudo systemctl start deploy-server
+
+─────────────────────────────────────────
+3단계: 동작 확인
+─────────────────────────────────────────
+
+  # 서비스 상태
+  sudo systemctl status deploy-server
+
+  # health 체크
+  curl http://localhost:9000/health
+  # → {"status":"ok"} 응답 확인
+
+  # 배포 트리거 테스트 (토큰은 Secrets Manager에서 확인)
+  TOKEN=$(aws secretsmanager get-secret-value --secret-id lifesync/deploy-token \
+    --region ap-northeast-2 --query SecretString --output text \
+    | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+  curl -X POST http://localhost:9000/deploy -H "X-Deploy-Token: ${TOKEN}"
+  # → {"status":"triggered"} 응답 확인
+
+  # 로그 확인
+  tail -f /var/log/ansible-deploy.log
+
+─────────────────────────────────────────
+4단계: Ansible vars.yml 업데이트 (로컬 PC)
+─────────────────────────────────────────
+
+  파일: onprem-prod-repo/ansible/inventory/group_vars/private_api/vars.yml
+
+  변경 전:
+    control_node_url: "http://192.168.56.10:9000"
+
+  변경 후:
+    control_node_url: "http://<EC2-프라이빗-IP>:9000"
+
+─────────────────────────────────────────
+5단계: on-prem 재배포 (EC2 Control Node에서)
+─────────────────────────────────────────
+
+  cd /opt/ansible/onprem-prod-repo
+  git pull
+
+  ansible-playbook ansible/site.yml \
+    -i ansible/inventory/hosts.yml \
+    --vault-password-file ~/.vault_pass \
+    --limit ls-api
+
+─────────────────────────────────────────
+6단계: EC2 Security Group 설정 (AWS 콘솔)
+─────────────────────────────────────────
+
+  인바운드 규칙 추가:
+  - 유형: 사용자 지정 TCP
+  - 포트: 9000
+  - 소스: 192.168.56.0/24 (on-prem VPN 대역)
+
+─────────────────────────────────────────
+7단계: 전체 흐름 최종 확인
+─────────────────────────────────────────
+
+  on-prem ls-api VM에서:
+
+  TOKEN=$(aws secretsmanager get-secret-value --secret-id lifesync/deploy-token \
+    --region ap-northeast-2 --query SecretString --output text \
+    | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+  curl -X POST http://localhost:8000/internal/deploy -H "X-Deploy-Token: ${TOKEN}"
+  # → {"status":"triggered"} 확인
+
+  EC2에서 로그 확인:
+  tail -f /var/log/ansible-deploy.log
+
+─────────────────────────────────────────
+■ 환경변수 정리
+─────────────────────────────────────────
+
+  DEPLOY_TOKEN   : Secrets Manager lifesync/deploy-token {"token":"<값>"} → /etc/deploy-server/env
+  ANSIBLE_DIR    : /opt/ansible/onprem-prod-repo/ansible
+  VAULT_PASS_FILE: /home/ubuntu/.vault_pass
+  DEPLOY_LOG     : /var/log/ansible-deploy.log

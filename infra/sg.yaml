@@ -1,0 +1,138 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: LifeSync360 Security Groups (전체)
+
+Resources:
+  AlbSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ALB — public HTTP/HTTPS inbound
+      VpcId: !ImportValue lifesync-vpc-VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: lifesync-sg-alb
+
+  EcsPlatformSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ECS platform task — ALB에서만 8000 허용
+      VpcId: !ImportValue lifesync-vpc-VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          SourceSecurityGroupId: !Ref AlbSg
+      Tags:
+        - Key: Name
+          Value: lifesync-sg-ecs-platform
+
+  EcsAdminSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ECS admin task — ALB에서만 5001 허용
+      VpcId: !ImportValue lifesync-vpc-VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5001
+          ToPort: 5001
+          SourceSecurityGroupId: !Ref AlbSg
+      Tags:
+        - Key: Name
+          Value: lifesync-sg-ecs-admin
+
+  AuroraSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Aurora MySQL — ECS/Lambda만 3306 허용
+      VpcId: !ImportValue lifesync-vpc-VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref EcsPlatformSg
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref EcsAdminSg
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref LambdaSg
+      Tags:
+        - Key: Name
+          Value: lifesync-sg-aurora
+
+  ElastiCacheSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ElastiCache Redis — ECS platform만 6379 허용
+      VpcId: !ImportValue lifesync-vpc-VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          SourceSecurityGroupId: !Ref EcsPlatformSg
+      Tags:
+        - Key: Name
+          Value: lifesync-sg-redis
+
+  LambdaSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Lambda gcp_result_ingest — egress only
+      VpcId: !ImportValue lifesync-vpc-VpcId
+      Tags:
+        - Key: Name
+          Value: lifesync-sg-lambda
+
+  VmSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 계열사 VM — Kinesis/S3 outbound + SSH 제한 inbound
+      VpcId: !ImportValue lifesync-vpc-VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 10.0.0.0/16
+      Tags:
+        - Key: Name
+          Value: lifesync-sg-vm
+
+Outputs:
+  AlbSgId:
+    Value: !Ref AlbSg
+    Export:
+      Name: lifesync-sg-AlbSgId
+  EcsPlatformSgId:
+    Value: !Ref EcsPlatformSg
+    Export:
+      Name: lifesync-sg-EcsPlatformSgId
+  EcsAdminSgId:
+    Value: !Ref EcsAdminSg
+    Export:
+      Name: lifesync-sg-EcsAdminSgId
+  AuroraSgId:
+    Value: !Ref AuroraSg
+    Export:
+      Name: lifesync-sg-AuroraSgId
+  ElastiCacheSgId:
+    Value: !Ref ElastiCacheSg
+    Export:
+      Name: lifesync-sg-ElastiCacheSgId
+  LambdaSgId:
+    Value: !Ref LambdaSg
+    Export:
+      Name: lifesync-sg-LambdaSgId
+  VmSgId:
+    Value: !Ref VmSg
+    Export:
+      Name: lifesync-sg-VmSgId

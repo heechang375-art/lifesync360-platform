@@ -1,0 +1,34 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: LifeSync360 ElastiCache Redis 7.1
+
+Resources:
+  SubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      Description: lifesync redis subnet group
+      SubnetIds:
+        - !ImportValue lifesync-subnets-DataSubnetId
+
+  RedisCluster:
+    Type: AWS::ElastiCache::ReplicationGroup
+    Properties:
+      ReplicationGroupDescription: lifesync redis
+      NumCacheClusters: 1
+      CacheNodeType: cache.t3.micro
+      Engine: redis
+      EngineVersion: '7.1'
+      CacheSubnetGroupName: !Ref SubnetGroup
+      SecurityGroupIds:
+        - !ImportValue lifesync-sg-ElastiCacheSgId
+      AtRestEncryptionEnabled: true
+      TransitEncryptionEnabled: true
+
+Outputs:
+  PrimaryEndpoint:
+    Value: !GetAtt RedisCluster.PrimaryEndPoint.Address
+    Export:
+      Name: lifesync-redis-PrimaryEndpoint
+  PrimaryPort:
+    Value: !GetAtt RedisCluster.PrimaryEndPoint.Port
+    Export:
+      Name: lifesync-redis-PrimaryPort

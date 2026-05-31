@@ -1,0 +1,51 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: LifeSync360 Aurora MySQL 8.0 클러스터
+
+Resources:
+  # DataSubnet(2a) + AppSubnet2(2c) 조합으로 2 AZ 요건 충족
+  DbSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: lifesync aurora subnet group
+      SubnetIds:
+        - !ImportValue lifesync-subnets-DataSubnetId
+        - !ImportValue lifesync-subnets-AppSubnet2Id
+
+  AuroraCluster:
+    Type: AWS::RDS::DBCluster
+    DeletionPolicy: Snapshot
+    Properties:
+      Engine: aurora-mysql
+      EngineVersion: 8.0.mysql_aurora.3.04.0
+      DatabaseName: lifesync
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      VpcSecurityGroupIds:
+        - !ImportValue lifesync-sg-AuroraSgId
+      MasterUsername: '{{resolve:secretsmanager:lifesync/aurora:SecretString:user}}'
+      MasterUserPassword: '{{resolve:secretsmanager:lifesync/aurora:SecretString:password}}'
+      BackupRetentionPeriod: 7
+      StorageEncrypted: true
+      DeletionProtection: true
+
+  AuroraInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      Engine: aurora-mysql
+      DBClusterIdentifier: !Ref AuroraCluster
+      DBInstanceClass: db.t3.medium
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      AvailabilityZone: ap-northeast-2a
+
+Outputs:
+  ClusterEndpoint:
+    Value: !GetAtt AuroraCluster.Endpoint.Address
+    Export:
+      Name: lifesync-aurora-ClusterEndpoint
+  ReaderEndpoint:
+    Value: !GetAtt AuroraCluster.ReadEndpoint.Address
+    Export:
+      Name: lifesync-aurora-ReaderEndpoint
+  ClusterId:
+    Value: !Ref AuroraCluster
+    Export:
+      Name: lifesync-aurora-ClusterId

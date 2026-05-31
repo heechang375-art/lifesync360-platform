@@ -1,0 +1,20 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: LifeSync360 SQS — Lambda ingest DLQ
+
+Resources:
+  IngestDlq:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: lifesync-ingest-dlq
+      MessageRetentionPeriod: 1209600
+      VisibilityTimeout: 300
+
+Outputs:
+  IngestDlqUrl:
+    Value: !Ref IngestDlq
+    Export:
+      Name: lifesync-sqs-IngestDlqUrl
+  IngestDlqArn:
+    Value: !GetAtt IngestDlq.Arn
+    Export:
+      Name: lifesync-sqs-IngestDlqArn

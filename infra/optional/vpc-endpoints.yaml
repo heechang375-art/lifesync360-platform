@@ -1,0 +1,64 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: LifeSync360 VPC Endpoints (NAT GW 비용 절감, 프라이빗 통신)
+
+Resources:
+  S3GatewayEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !ImportValue lifesync-vpc-VpcId
+      ServiceName: !Sub com.amazonaws.ap-northeast-2.s3
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !ImportValue lifesync-rt-AppRt1Id
+        - !ImportValue lifesync-rt-AppRt2Id
+        - !ImportValue lifesync-rt-DataRtId
+        - !ImportValue lifesync-rt-VmRtId
+
+  DynamoDbGatewayEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !ImportValue lifesync-vpc-VpcId
+      ServiceName: !Sub com.amazonaws.ap-northeast-2.dynamodb
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !ImportValue lifesync-rt-AppRt1Id
+        - !ImportValue lifesync-rt-AppRt2Id
+
+  SecretsManagerEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !ImportValue lifesync-vpc-VpcId
+      ServiceName: !Sub com.amazonaws.ap-northeast-2.secretsmanager
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !ImportValue lifesync-subnets-AppSubnet1Id
+        - !ImportValue lifesync-subnets-AppSubnet2Id
+      SecurityGroupIds:
+        - !ImportValue lifesync-sg-EcsPlatformSgId
+      PrivateDnsEnabled: true
+
+  EcrApiEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !ImportValue lifesync-vpc-VpcId
+      ServiceName: !Sub com.amazonaws.ap-northeast-2.ecr.api
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !ImportValue lifesync-subnets-AppSubnet1Id
+        - !ImportValue lifesync-subnets-AppSubnet2Id
+      SecurityGroupIds:
+        - !ImportValue lifesync-sg-EcsPlatformSgId
+      PrivateDnsEnabled: true
+
+  EcrDkrEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !ImportValue lifesync-vpc-VpcId
+      ServiceName: !Sub com.amazonaws.ap-northeast-2.ecr.dkr
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !ImportValue lifesync-subnets-AppSubnet1Id
+        - !ImportValue lifesync-subnets-AppSubnet2Id
+      SecurityGroupIds:
+        - !ImportValue lifesync-sg-EcsPlatformSgId
+      PrivateDnsEnabled: true

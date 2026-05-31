@@ -1,0 +1,38 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: LifeSync360 Lambda — gcp_result_ingest
+
+Resources:
+  IngestFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: lifesync-gcp-result-ingest
+      Runtime: python3.11
+      Handler: handler.lambda_handler
+      Role: !ImportValue lifesync-iam-LambdaIngestRoleArn
+      Code:
+        S3Bucket: !ImportValue lifesync-s3-LambdaArtifactBucketName
+        S3Key: gcp_result_ingest.zip
+      Timeout: 30
+      MemorySize: 256
+      VpcConfig:
+        SubnetIds:
+          - !ImportValue lifesync-subnets-AppSubnet1Id
+        SecurityGroupIds:
+          - !ImportValue lifesync-sg-LambdaSgId
+      Environment:
+        Variables:
+          DYNAMO_TABLE: !ImportValue lifesync-dynamo-ScoresTableName
+          AURORA_SECRET_ARN: !ImportValue lifesync-secrets-AuroraSecretArn
+          REGION: ap-northeast-2
+      DeadLetterConfig:
+        TargetArn: !ImportValue lifesync-sqs-IngestDlqArn
+
+Outputs:
+  IngestFunctionArn:
+    Value: !GetAtt IngestFunction.Arn
+    Export:
+      Name: lifesync-lambda-IngestFunctionArn
+  IngestFunctionName:
+    Value: !Ref IngestFunction
+    Export:
+      Name: lifesync-lambda-IngestFunctionName

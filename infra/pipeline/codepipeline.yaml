@@ -1,0 +1,112 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: LifeSync360 CodePipeline (platform / admin)
+
+Resources:
+  PlatformPipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: lifesync-pipeline-platform
+      RoleArn: !ImportValue lifesync-iam-CodePipelineRoleArn
+      ArtifactStore:
+        Type: S3
+        Location: !ImportValue lifesync-s3-PipelineBucketName
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: Source
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeCommit
+                Version: '1'
+              Configuration:
+                RepositoryName: lifesync360-platform
+                BranchName: main
+                PollForSourceChanges: false
+              OutputArtifacts:
+                - Name: SourceArtifact
+        - Name: Build
+          Actions:
+            - Name: Build
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: !ImportValue lifesync-codebuild-PlatformBuildName
+              InputArtifacts:
+                - Name: SourceArtifact
+              OutputArtifacts:
+                - Name: BuildArtifact
+        - Name: Deploy
+          Actions:
+            - Name: Deploy
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CodeDeployToECS
+                Version: '1'
+              Configuration:
+                ApplicationName: !ImportValue lifesync-codedeploy-AppName
+                DeploymentGroupName: !ImportValue lifesync-codedeploy-PlatformDgName
+                TaskDefinitionTemplateArtifact: BuildArtifact
+                TaskDefinitionTemplatePath: taskdef.json
+                AppSpecTemplateArtifact: BuildArtifact
+                AppSpecTemplatePath: appspec.yaml
+                Image1ArtifactName: BuildArtifact
+                Image1ContainerName: IMAGE1_NAME
+              InputArtifacts:
+                - Name: BuildArtifact
+
+  AdminPipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: lifesync-pipeline-admin
+      RoleArn: !ImportValue lifesync-iam-CodePipelineRoleArn
+      ArtifactStore:
+        Type: S3
+        Location: !ImportValue lifesync-s3-PipelineBucketName
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: Source
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeCommit
+                Version: '1'
+              Configuration:
+                RepositoryName: lifesync360-admin
+                BranchName: main
+                PollForSourceChanges: false
+              OutputArtifacts:
+                - Name: SourceArtifact
+        - Name: Build
+          Actions:
+            - Name: Build
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: !ImportValue lifesync-codebuild-AdminBuildName
+              InputArtifacts:
+                - Name: SourceArtifact
+              OutputArtifacts:
+                - Name: BuildArtifact
+        - Name: Deploy
+          Actions:
+            - Name: Deploy
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: ECS
+                Version: '1'
+              Configuration:
+                ClusterName: !ImportValue lifesync-ecs-ClusterName
+                ServiceName: lifesync-admin-service
+                FileName: imagedefinitions.json
+              InputArtifacts:
+                - Name: BuildArtifact

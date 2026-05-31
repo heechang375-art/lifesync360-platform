@@ -1,0 +1,93 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: LifeSync360 API Gateway — GCP ingest 엔드포인트 (API Key 인증)
+
+Resources:
+  Api:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: lifesync-ingest-api
+
+  IngestResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref Api
+      ParentId: !GetAtt Api.RootResourceId
+      PathPart: ingest
+
+  PostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref Api
+      ResourceId: !Ref IngestResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      ApiKeyRequired: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub
+          - arn:aws:apigateway:ap-northeast-2:lambda:path/2015-03-31/functions/${FnArn}/invocations
+          - FnArn: !ImportValue lifesync-lambda-IngestFunctionArn
+
+  LambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !ImportValue lifesync-lambda-IngestFunctionName
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub
+        - arn:aws:execute-api:ap-northeast-2:${AWS::AccountId}:${ApiId}/*/POST/ingest
+        - ApiId: !Ref Api
+
+  Deployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: PostMethod
+    Properties:
+      RestApiId: !Ref Api
+      StageName: v1
+
+  Stage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: !Ref Api
+      DeploymentId: !Ref Deployment
+      StageName: v1
+      MethodSettings:
+        - ResourcePath: /ingest
+          HttpMethod: POST
+          ThrottlingRateLimit: 100
+          ThrottlingBurstLimit: 200
+
+  ApiKey:
+    Type: AWS::ApiGateway::ApiKey
+    Properties:
+      Name: lifesync-gcp-ingest-key
+      Enabled: true
+
+  UsagePlan:
+    Type: AWS::ApiGateway::UsagePlan
+    Properties:
+      UsagePlanName: lifesync-ingest-plan
+      ApiStages:
+        - ApiId: !Ref Api
+          Stage: v1
+      Throttle:
+        RateLimit: 100
+        BurstLimit: 200
+
+  UsagePlanKey:
+    Type: AWS::ApiGateway::UsagePlanKey
+    Properties:
+      KeyId: !Ref ApiKey
+      KeyType: API_KEY
+      UsagePlanId: !Ref UsagePlan
+
+Outputs:
+  IngestEndpoint:
+    Value: !Sub https://${Api}.execute-api.ap-northeast-2.amazonaws.com/v1/ingest
+    Export:
+      Name: lifesync-apigw-IngestEndpoint
+  ApiId:
+    Value: !Ref Api
+    Export:
+      Name: lifesync-apigw-ApiId

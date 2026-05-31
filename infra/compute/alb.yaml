@@ -1,0 +1,117 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: LifeSync360 ALB + Target Groups + Listeners
+
+Resources:
+  Alb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: lifesync-alb
+      Scheme: internet-facing
+      Type: application
+      Subnets:
+        - !ImportValue lifesync-subnets-PublicSubnet1Id
+        - !ImportValue lifesync-subnets-PublicSubnet2Id
+      SecurityGroups:
+        - !ImportValue lifesync-sg-AlbSgId
+
+  PlatformTg:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: lifesync-tg-platform
+      Protocol: HTTP
+      Port: 8000
+      VpcId: !ImportValue lifesync-vpc-VpcId
+      TargetType: ip
+      HealthCheckPath: /health
+      HealthCheckIntervalSeconds: 30
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+
+  AdminTg:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: lifesync-tg-admin
+      Protocol: HTTP
+      Port: 5001
+      VpcId: !ImportValue lifesync-vpc-VpcId
+      TargetType: ip
+      HealthCheckPath: /health
+      HealthCheckIntervalSeconds: 30
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+
+  PlatformTgGreen:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: lifesync-tg-platform-green
+      Protocol: HTTP
+      Port: 8000
+      VpcId: !ImportValue lifesync-vpc-VpcId
+      TargetType: ip
+      HealthCheckPath: /health
+      HealthCheckIntervalSeconds: 30
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+
+  HttpListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref Alb
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref PlatformTg
+
+  TestListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref Alb
+      Port: 8080
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref PlatformTgGreen
+
+  AdminListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref HttpListener
+      Priority: 10
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - /admin*
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref AdminTg
+
+Outputs:
+  AlbDnsName:
+    Value: !GetAtt Alb.DNSName
+    Export:
+      Name: lifesync-alb-DnsName
+  AlbArn:
+    Value: !Ref Alb
+    Export:
+      Name: lifesync-alb-Arn
+  PlatformTgArn:
+    Value: !Ref PlatformTg
+    Export:
+      Name: lifesync-alb-PlatformTgArn
+  AdminTgArn:
+    Value: !Ref AdminTg
+    Export:
+      Name: lifesync-alb-AdminTgArn
+  PlatformTgGreenArn:
+    Value: !Ref PlatformTgGreen
+    Export:
+      Name: lifesync-alb-PlatformTgGreenArn
+  TestListenerArn:
+    Value: !Ref TestListener
+    Export:
+      Name: lifesync-alb-TestListenerArn
+  HttpListenerArn:
+    Value: !Ref HttpListener
+    Export:
+      Name: lifesync-alb-HttpListenerArn
