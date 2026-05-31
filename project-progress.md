@@ -65,6 +65,35 @@ CGW(VPN 터미네이션) 설정에 `rightsubnet`이 있으면 서브넷 변경 �
 
 ---
 
+## 온프렘 S2S VPN — SK 공유기 ALG → ESP-drop 근본해결 + BGP 전환 (2026-05-30~31)
+
+### 증상
+- ls-api strongSwan ↔ AWS S2S VPN: IKE는 ESTABLISHED인데 AWS 리턴 ESP-in-UDP(4500)가
+  ls-api NIC에 도달 안 함 → BGP SYN-SENT 멈춤, 콘솔 터널 DOWN (tcpdump 인바운드 ESP 0).
+
+### 근본원인
+- 온프렘 게이트웨이 SK브로드밴드 GW-HF611R 공유기의 IPsec ALG(VPN passthrough)가 stuck → ESP 드롭.
+- strongSwan 설정·다운로드 vendor·TGW/VGW 전부 무관. 유일 변수 = 공유기.
+
+### 해결
+- 공유기 관리자(192.168.45.1) → VPN passthrough → IPsec OFF→ON 토글 → ALG/conntrack 리셋
+  → ESP 정상, BGP 양쪽 UP.
+- 검증: 732 fresh VPN + 354 실제 VPN 둘 다 재현 = 영구적.
+
+### 현재 구성 (354 계정)
+- VPN `vpn-03b4229ce11776710`, CGW `cgw-01e16cc1664bb7d41`(ASN 65000), TGW `tgw-0cf2baae08198d591`.
+  dynamic/BGP, 양쪽 터널 UP, `192.168.45.0/24` TGW 전파(active).
+- ls-api: swanctl(vici) + FRR(BGP 65000). 서비스 `strongswan`(레거시 starter 아님), conn `aws-bgp-1`/`aws-bgp-2`.
+  - 상태조회 `sudo swanctl --list-sas` (옛 `ipsec status` 미사용), 로그 `journalctl -u strongswan -f`
+  - strongswan/frr/xfrm-vpn-setup enabled(재부팅 자동), 설정 `/opt/vpn-bgp-staging/`
+- ⚠️ 터널값(공인IP/PSK/inside)은 VPN 재생성 시 바뀜 → `describe-vpn-connections` 추출 후 swanctl 반영.
+
+### SCN-03 (VPN 장애 → self-healing)
+- UDP 500/4500 OUTPUT 차단 → 터널/BGP 다운 → 해제 → 자동 재수렴 확인.
+- ⚠️ 차단 오래 두면 IKE backoff 증가로 자동복구 stall → 수동 `swanctl --initiate` 필요. 데모 시 차단 짧게.
+
+---
+
 ## Admin EC2 앱 배포 경로 (중요) — 2026-05-26 확정
 
 > 현재 EC2: `i-0e9ff040046f8c1ca` (Windows)
