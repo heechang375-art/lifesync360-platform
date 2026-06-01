@@ -1,2 +1,3 @@
 deploy_token: "lifesync-deploy-token-2026"
-control_node_url: "http://192.168.56.10:9000"
+# Tailscale tailnet 경유 (2026-05-30). 컨트롤노드 control-node-aws = 100.109.235.45
+control_node_url: "http://100.109.235.45:9000"

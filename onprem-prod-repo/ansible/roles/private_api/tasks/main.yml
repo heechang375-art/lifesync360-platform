@@ -77,6 +77,17 @@
     mode: '0755'
     owner: ansible
 
+- name: Set cron environment for ansible trigger
+  cron:
+    name: "{{ item.name }}"
+    env: yes
+    value: "{{ item.value }}"
+    user: ansible
+  loop:
+    - { name: ANSIBLE_ENV,      value: production }
+    - { name: CONTROL_NODE_URL, value: "{{ control_node_url }}" }
+    - { name: DEPLOY_TOKEN,     value: "{{ deploy_token }}" }
+
 - name: Register ansible trigger cron
   cron:
     name: Ansible deployment trigger
