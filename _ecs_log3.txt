@@ -1,8 +1,0 @@
-﻿aws : 
-At line:3 char:11
-+ $result = aws logs get-log-events --log-group-name "/ecs/lifesync-pla ...
-+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    + CategoryInfo          : NotSpecified: (:String) [], RemoteException
-    + FullyQualifiedErrorId : NativeCommandError
- 
-aws: [ERROR]: An error occurred (ResourceNotFoundException) when calling the GetLogEvents operation: The specified log stream does not exist.

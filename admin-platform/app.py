@@ -1428,14 +1428,12 @@ def users():
     consent_domains = []   # 동의한 계열사 company_code 목록
     try:
         consent    = (_call_onprem('get_consent', global_id=q) or {})
-        ls_user_id = consent.get('ls_user_id') or ''
-        if not ls_user_id:
-            # get_consent 응답에 ls_user_id 없을 때 get_user_by_global 로 재확인
-            user_info  = (_call_onprem('get_user_by_global', global_id=q) or {})
-            ls_user_id = user_info.get('ls_user_id') or ''
-        if not ls_user_id:
-            consent_gate = 'not_registered'
-        else:
+        # global_id가 응답에 있으면 on-prem 등록 고객으로 판단
+        if not consent.get('global_id'):
+            user_info = (_call_onprem('get_user_by_global', global_id=q) or {})
+            if not user_info.get('global_id'):
+                consent_gate = 'not_registered'
+        if consent_gate == 'ok':
             active = [c for c in (consent.get('consents') or [])
                       if c.get('consent_flag') == 'Y' or c.get('agreed')]
             if not active:

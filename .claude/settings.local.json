@@ -333,7 +333,8 @@
       "Bash(sed *)",
       "Bash(printf *)",
       "Bash(tr *)",
-      "Bash(awk *)"
+      "Bash(awk *)",
+      "WebFetch(domain:support.claude.com)"
     ]
   }
 }

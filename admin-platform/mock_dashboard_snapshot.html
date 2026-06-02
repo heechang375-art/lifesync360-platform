@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Customer 360 — Admin</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Pretendard', sans-serif; color: #334155; background: #f6f8fb; min-height: 100vh; }
+a { text-decoration: none; color: inherit; }
+.top-header { background: #fff; border-bottom: 1px solid #e5eaf2; position: sticky; top: 0; z-index: 10; }
+.header-inner { max-width: 1280px; margin: 0 auto; height: 56px; padding: 0 24px; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 24px; }
+.brand { display: flex; align-items: baseline; gap: 8px; }
+.brand-main { font-size: 16px; font-weight: 700; color: #4f80e1; letter-spacing: .2px; }
+.brand-sub  { font-size: 12px; color: #94a3b8; }
+.top-tabs { display: flex; align-items: center; background: #f1f5f9; border-radius: 10px; padding: 4px; gap: 2px; }
+.top-tabs .tab { padding: 7px 18px; font-size: 13px; font-weight: 500; color: #64748b; border-radius: 7px; }
+.top-tabs .tab.active { background: #4f80e1; color: #fff; box-shadow: 0 1px 3px rgba(79,128,225,.3); }
+.header-right { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
+.user-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #64748b; }
+.user-status .status-dot { width: 7px; height: 7px; border-radius: 50%; background: #16a34a; box-shadow: 0 0 0 2px #dcfce7; }
+.page-body { max-width: 1280px; margin: 0 auto; padding: 22px 24px 40px; }
+.section { background: #fff; border: 1px solid #e5eaf2; border-radius: 10px; padding: 14px 16px; margin-top: 12px; }
+.card { background: #fff; border: 1px solid #e5eaf2; border-radius: 10px; padding: 14px 16px; }
+.card-title { font-size: 12px; font-weight: 700; color: #4f80e1; margin-bottom: 10px; letter-spacing: .3px; }
+.grid { display: grid; gap: 10px; }
+.grid-3 { grid-template-columns: repeat(3, 1fr); }
+.grid-2 { grid-template-columns: repeat(2, 1fr); }
+.mono { font-family: 'SF Mono', Consolas, monospace; font-size: 12px; color: #64748b; }
+.search-bar { display: flex; gap: 8px; align-items: center; }
+.search-bar .form-input { flex: 1; padding: 10px 14px; border: 1px solid #e5eaf2; border-radius: 8px; font-size: 14px; color: #334155; background: #fff; }
+.btn { padding: 10px 22px; border-radius: 8px; font-size: 13px; font-weight: 600; border: none; cursor: pointer; }
+.btn-primary { background: #4f80e1; color: #fff; }
+.search-hint { font-size: 11px; color: #94a3b8; margin-left: 10px; }
+.c360-profile { display: flex; align-items: center; gap: 18px; }
+.c360-avatar  { width: 60px; height: 60px; border-radius: 50%; background: #e0e7ff; color: #4f46e5; display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: 700; flex-shrink: 0; }
+.c360-name    { font-size: 22px; font-weight: 700; color: #1e293b; display: inline-flex; align-items: center; gap: 8px; }
+.c360-meta    { font-size: 12px; color: #94a3b8; margin-top: 4px; font-family: 'SF Mono', Consolas, monospace; }
+.c360-attrs   { font-size: 12px; color: #64748b; margin-top: 4px; }
+.c360-attrs strong { color: #1e293b; font-weight: 600; }
+.c360-scores  { display: flex; gap: 10px; margin-left: auto; }
+.c360-score   { background: #eff6ff; border-radius: 8px; padding: 8px 14px; text-align: center; min-width: 86px; }
+.c360-score-label { font-size: 10px; color: #94a3b8; }
+.c360-score-value { font-size: 22px; font-weight: 700; color: #3b82f6; margin-top: 2px; }
+.info-row { display: flex; padding: 8px 0; font-size: 12px; border-bottom: 1px solid #f1f5f9; }
+.info-row:last-child { border-bottom: none; }
+.info-key { width: 100px; color: #94a3b8; flex-shrink: 0; }
+.info-val { color: #334155; font-weight: 500; }
+.info-val .pill-state { display: inline-block; padding: 1px 8px; border-radius: 4px; background: #dcfce7; color: #16a34a; font-size: 11px; font-weight: 700; }
+.info-sub { color: #94a3b8; font-size: 11px; margin-left: 6px; }
+.pill-group { display: flex; flex-wrap: wrap; gap: 6px; }
+.pill { display: inline-block; padding: 3px 9px; border-radius: 4px; font-size: 11px; font-weight: 700; }
+.pill-blue   { background: #dbeafe; color: #2563eb; }
+.pill-amber  { background: #fef3c7; color: #d97706; }
+.pill-teal   { background: #ccfbf1; color: #0f766e; }
+.topn-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #f1f5f9; font-size: 13px; }
+.topn-row:last-child { border-bottom: none; }
+.topn-rank { width: 22px; height: 22px; border-radius: 50%; background: #f1f5f9; color: #64748b; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.topn-name { flex: 1; color: #334155; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nba-card { background: linear-gradient(180deg, #eff6ff 0%, #f5f3ff 100%); border-radius: 8px; padding: 14px 16px; }
+.nba-label { font-size: 10px; font-weight: 700; color: #6366f1; letter-spacing: .5px; }
+.nba-action { font-size: 18px; font-weight: 800; color: #1e1b4b; margin-top: 4px; }
+.bar-track { background: #f1f5f9; border-radius: 4px; height: 10px; overflow: hidden; }
+.bar-fill  { height: 100%; border-radius: 4px; }
+</style>
+</head>
+<body>
+
+<div class="top-header">
+  <div class="header-inner">
+    <div class="brand">
+      <span class="brand-main">LifeSync 360</span>
+      <span class="brand-sub">Admin Console</span>
+    </div>
+    <div class="top-tabs">
+      <span class="tab">Overview</span>
+      <span class="tab active">Customer 360</span>
+      <span class="tab">Analytics</span>
+      <span class="tab">Infra</span>
+    </div>
+    <div class="header-right">
+      <div class="user-status"><span class="status-dot"></span>admin</div>
+    </div>
+  </div>
+</div>
+
+<div class="page-body">
+
+  <section class="section">
+    <div class="search-bar">
+      <input class="form-input" type="text" value="G000000001" readonly>
+      <button class="btn btn-primary">검색</button>
+      <span class="search-hint">G + 9자리 ID 또는 고객 이름 — On-Prem master_customer 검색</span>
+    </div>
+  </section>
+
+  <!-- 프로필 헤더 -->
+  <section class="section">
+    <div class="c360-profile">
+      <div class="c360-avatar">김</div>
+      <div>
+        <div class="c360-name">김*수 <span class="pill pill-amber">👑 CARE</span></div>
+        <div class="c360-meta">G000000001 &nbsp;·&nbsp; 010-****-1234</div>
+        <div class="c360-attrs">남 / 40대 &nbsp;·&nbsp; 지역 <strong>서울</strong> &nbsp;·&nbsp; 소득 <strong>상위 15%</strong> &nbsp;·&nbsp; 자산 <strong>8억~12억</strong></div>
+      </div>
+      <div class="c360-scores">
+        <div class="c360-score">
+          <div class="c360-score-label">AI 종합 점수</div>
+          <div class="c360-score-value">45</div>
+        </div>
+        <div class="c360-score">
+          <div class="c360-score-label">AI 건강 점수</div>
+          <div class="c360-score-value" style="color:#14b8a6;">72</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="grid grid-2" style="margin-top:12px;">
+
+    <!-- 좌 컬럼 -->
+    <div style="display:flex; flex-direction:column; gap:10px;">
+
+      <div class="card">
+        <div class="card-title">🛡 가입 / 상태 정보</div>
+        <div class="info-row"><div class="info-key">그룹사 등록일</div><div class="info-val">2026-04-20</div></div>
+        <div class="info-row"><div class="info-key">최근 갱신일</div><div class="info-val">2026-05-26</div></div>
+        <div class="info-row"><div class="info-key">고객 상태</div><div class="info-val"><span class="pill-state">ACTIVE</span></div></div>
+        <div class="info-row"><div class="info-key">고객 유형</div><div class="info-val">일반고객</div></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">✅ 동의 / 보유 현황</div>
+        <div style="padding:8px 0; border-bottom:1px solid #f1f5f9;">
+          <div style="font-size:11px; color:#94a3b8; margin-bottom:6px;">동의 현황</div>
+          <div class="pill-group">
+            <span class="pill pill-blue">은행</span>
+            <span class="pill pill-blue">온라인보험</span>
+          </div>
+          <div style="font-size:11px; color:#94a3b8; margin-top:6px;">2개 채널 동의</div>
+        </div>
+        <div style="padding:10px 0 0 0;">
+          <div style="font-size:11px; color:#94a3b8; margin-bottom:6px;">보유 계열사</div>
+          <div class="pill-group">
+            <span class="pill pill-teal">은행</span>
+            <span class="pill pill-teal">카드</span>
+            <span class="pill pill-teal">온라인보험</span>
+          </div>
+          <div style="font-size:11px; color:#94a3b8; margin-top:6px;">3개 계열사 이용 중 (전체 8개 中)</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">🔥 PERSONALIZED 추천 <span style="color:#94a3b8; font-weight:500;">(REDIS TOP-N)</span></div>
+        <div class="topn-row"><div class="topn-rank">1</div><div class="topn-name">건강지킴이 보험</div></div>
+        <div class="topn-row"><div class="topn-rank">2</div><div class="topn-name">자유적금 플러스</div></div>
+        <div class="topn-row"><div class="topn-rank">3</div><div class="topn-name">건강보험 GOLD</div></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">🔗 교차판매 추천 <span style="color:#94a3b8; font-weight:500;">(cross_sell_rule · 룰 기반)</span></div>
+        <div class="topn-row">
+          <div class="topn-name">자유적금 플러스 <span style="color:#94a3b8; font-size:11px;">(은행)</span></div>
+          <div style="font-size:11px; color:#94a3b8; max-width:60%; text-align:right;">카드 이용 고객 → 적금 미보유</div>
+        </div>
+        <div class="topn-row">
+          <div class="topn-name">프리미엄 실손보험 <span style="color:#94a3b8; font-size:11px;">(온라인보험)</span></div>
+          <div style="font-size:11px; color:#94a3b8; max-width:60%; text-align:right;">은행 VIP → 실손 미가입</div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- 우 컬럼 -->
+    <div style="display:flex; flex-direction:column; gap:10px;">
+
+      <div class="card">
+        <div class="card-title">🧠 AI 분석 결과 <span style="color:#94a3b8; font-weight:500;">(VERTEX AI)</span></div>
+        <div class="nba-card">
+          <div class="nba-label">⭐ NEXT BEST ACTION</div>
+          <div class="nba-action">고객 니즈 파악 상담 진행</div>
+        </div>
+        <div style="margin-top:10px; font-size:11px; color:#94a3b8;">AI 예측</div>
+        <div class="grid grid-2" style="margin-top:6px;">
+          <div style="background:#dcfce7; border-radius:6px; padding:8px 12px; display:flex; align-items:center; justify-content:space-between;">
+            <span style="font-size:12px; color:#16a34a; font-weight:600;">✓ VIP 전환 확률</span>
+            <span style="font-size:11px; color:#16a34a; font-weight:700;">54.2%</span>
+          </div>
+          <div style="background:#dcfce7; border-radius:6px; padding:8px 12px; display:flex; align-items:center; justify-content:space-between;">
+            <span style="font-size:12px; color:#16a34a; font-weight:600;">✓ 추천 반응 확률</span>
+            <span style="font-size:11px; color:#16a34a; font-weight:700;">45%</span>
+          </div>
+          <div style="background:#dcfce7; border-radius:6px; padding:8px 12px; display:flex; align-items:center; justify-content:space-between;">
+            <span style="font-size:12px; color:#16a34a; font-weight:600;">✓ 가입 확률</span>
+            <span style="font-size:11px; color:#16a34a; font-weight:700;">28%</span>
+          </div>
+        </div>
+        <div style="margin-top:12px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+            <span style="font-size:11px; color:#64748b;">추천 반응 가능성</span>
+            <span style="font-size:13px; font-weight:700; color:#6366f1;">45%</span>
+          </div>
+          <div class="bar-track" style="height:10px;">
+            <div class="bar-fill" style="width:45%; background: linear-gradient(90deg, #6366f1 0%, #ec4899 100%);"></div>
+          </div>
+        </div>
+        <div style="margin-top:14px;">
+          <div style="font-size:11px; color:#94a3b8; margin-bottom:6px;">정적 점수 <span style="color:#cbd5e1;">(On-Prem customer_360_profile · 룰 기반)</span></div>
+          <div class="grid grid-3">
+            <div style="background:#f8fafc; border-radius:6px; padding:8px 12px; text-align:center;">
+              <div style="font-size:11px; color:#94a3b8;">AI 점수</div>
+              <div style="font-size:20px; font-weight:700; color:#6366f1; margin-top:2px;">45</div>
+            </div>
+            <div style="background:#f8fafc; border-radius:6px; padding:8px 12px; text-align:center;">
+              <div style="font-size:11px; color:#94a3b8;">AI 등급</div>
+              <div style="font-size:20px; font-weight:700; color:#f59e0b; margin-top:2px;">CARE</div>
+            </div>
+            <div style="background:#f8fafc; border-radius:6px; padding:8px 12px; text-align:center;">
+              <div style="font-size:11px; color:#94a3b8;">VIP 전환 가능성</div>
+              <div style="font-size:20px; font-weight:700; color:#14b8a6; margin-top:2px;">54.2%</div>
+            </div>
+          </div>
+        </div>
+        <div style="font-size:10px; color:#cbd5e1; text-align:right; margin-top:8px;">데이터 갱신: 2026-05-26T11:16</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">📊 최근 추천 활동</div>
+        <div class="topn-row">
+          <div class="mono" style="width:90px;">05-26 10:12</div>
+          <div class="topn-name">건강지킴이 보험</div>
+          <span class="pill" style="background:#dcfce7; color:#16a34a;">구매</span>
+        </div>
+        <div class="topn-row">
+          <div class="mono" style="width:90px;">05-25 14:38</div>
+          <div class="topn-name">자유적금 플러스</div>
+          <span class="pill" style="background:#dbeafe; color:#1d4ed8;">클릭</span>
+        </div>
+        <div class="topn-row">
+          <div class="mono" style="width:90px;">05-24 09:05</div>
+          <div class="topn-name">건강보험 GOLD</div>
+          <span class="pill" style="background:#dbeafe; color:#1d4ed8;">클릭</span>
+        </div>
+        <div class="topn-row">
+          <div class="mono" style="width:90px;">05-23 11:20</div>
+          <div class="topn-name">프리미엄 실손보험</div>
+          <span class="pill" style="background:#f1f5f9; color:#64748b;">노출</span>
+        </div>
+        <div class="topn-row">
+          <div class="mono" style="width:90px;">05-22 16:44</div>
+          <div class="topn-name">걷기 챌린지 앱</div>
+          <span class="pill" style="background:#f1f5f9; color:#64748b;">노출</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">📈 최근 행동 로그</div>
+        <div class="topn-row">
+          <div class="mono" style="width:90px;">05-26 10:09</div>
+          <div class="topn-name">건강지킴이 보험 클릭</div>
+          <span class="pill" style="background:#dbeafe; color:#1d4ed8;">상품클릭</span>
+        </div>
+        <div class="topn-row">
+          <div class="mono" style="width:90px;">05-26 09:41</div>
+          <div class="topn-name">MAIN 페이지 방문</div>
+          <span class="pill" style="background:#f1f5f9; color:#64748b;">방문</span>
+        </div>
+        <div class="topn-row">
+          <div class="mono" style="width:90px;">05-25 14:33</div>
+          <div class="topn-name">프리미엄 실손보험 클릭</div>
+          <span class="pill" style="background:#dbeafe; color:#1d4ed8;">상품클릭</span>
+        </div>
+        <div class="topn-row">
+          <div class="mono" style="width:90px;">05-25 14:28</div>
+          <div class="topn-name">RECOMMEND 페이지 방문</div>
+          <span class="pill" style="background:#f1f5f9; color:#64748b;">방문</span>
+        </div>
+        <div class="topn-row">
+          <div class="mono" style="width:90px;">05-24 08:58</div>
+          <div class="topn-name">HEALTH 페이지 방문</div>
+          <span class="pill" style="background:#f1f5f9; color:#64748b;">방문</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
