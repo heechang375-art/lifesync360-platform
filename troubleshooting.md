@@ -1,6 +1,11 @@
-# 온프레미스 트러블슈팅 — LifeSync360
+# LifeSync360 트러블슈팅 (온프레미스 + 플랫폼)
 
-증상별 즉시 해결 가이드.
+증상별 즉시 해결 가이드. 온프레미스 인프라와 플랫폼/앱 이슈를 모두 다룹니다.
+
+> **다른 트러블슈팅 위치**
+> - 클라우드 CI/CD (CodeBuild·ECS·IAM): [`docs/cicd-troubleshooting-and-iac-tasks.md`](docs/cicd-troubleshooting-and-iac-tasks.md)
+> - 앱 함수별 인라인 팁: [`docs/lifesync360-platform-app-guide.md`](docs/lifesync360-platform-app-guide.md) · [`docs/admin-platform-app-guide.md`](docs/admin-platform-app-guide.md)
+> - admin 쿼리·스키마 정합 감사: [`admin-platform-query-audit-2026-05-23.md`](admin-platform-query-audit-2026-05-23.md)
 
 ---
 
@@ -851,7 +856,7 @@ grep -n "ls-vpngw\|lc-api\|lc-db\|lc-tokenz" \
     admin-platform/mockup_data.py
 ```
 
-**유의** — 과거 기록 문서 (`local-test-troubleshooting.md`, `project-progress.md`, `pii-encryption-guide.md`, `test-reference.md`, `lambda-to-onprem-network.md`, `local-test-remaining.md`) 에 남은 `ls-vpngw`/`lc-*` 표기는 **history 보존을 위해 그대로 둠** (이력 추적 가치).
+**유의** — 과거 기록 문서 (`troubleshooting.md`, `project-progress.md`, `pii-encryption-guide.md`, `test-reference.md`, `lambda-to-onprem-network.md`, `local-test-remaining.md`) 에 남은 `ls-vpngw`/`lc-*` 표기는 **history 보존을 위해 그대로 둠** (이력 추적 가치).
 
 **재발 방지**
 
@@ -1076,3 +1081,60 @@ PrivateAPI app.py 의 `list_consent_all` 함수 마지막에 추가. Lambda / ad
 
 - pymysql + MySQL 8 JSON 컬럼은 driver/버전에 따라 dict 자동 변환 / 문자열 둘 다 가능 — 응답 직전에 명시적 `json.loads` 정규화
 - 새 엔드포인트가 JSON 컬럼 반환 시 같은 패턴 적용
+
+---
+
+## Control Node / SSM 부트스트랩 (초기 구축, 2026-05-11)
+
+### Ansible Control Node SSH 키 미생성
+
+**증상**
+- `/home/ansible/.ssh/id_rsa` 파일이 생성되지 않음
+- 14c SSM Association이 공개키를 SSM Parameter Store에 올리지 못함
+
+**원인 1 — 14b UserData 실행 순서 버그**
+- 원래 순서: `git clone` → `SSH 키 생성`
+- `set -euo pipefail` 상태에서 git clone 실패 시 `exit 1` → SSH 키 생성 코드 미실행
+- 수정: SSH 키 생성 블록을 git clone **앞으로** 이동
+
+**원인 2 — sudo env_reset으로 인한 git PATH 문제**
+- UserData에서 `sudo -u ansible git clone ...` 실행 시 sudo가 PATH 초기화
+- git이 `/usr/bin/git`에 설치돼 있어도 초기화된 PATH에서 못 찾아 `env: 'git': No such file or directory` 발생
+- 수정: `sudo -u ansible git` → `sudo -u ansible /usr/bin/git` 전체 경로 지정
+
+**원인 3 — 14c에서 STS 엔드포인트 필요**
+- `aws sts get-caller-identity` 호출이 퍼블릭 STS 엔드포인트로 나가 VPC Endpoint 없이 실패 가능
+- 수정: 해당 사전 체크 제거 (ssm:PutParameter 자체가 IAM 없으면 어차피 실패)
+
+**확인 방법**
+```bash
+# SSM 세션 접속
+aws ssm start-session --target <AnsibleControlInstanceId> --region ap-northeast-2
+
+# UserData 로그 확인
+sudo tail -100 /var/log/ansible-bootstrap.log
+
+# 키 존재 여부
+ls -la /home/ansible/.ssh/
+
+# SSM에 공개키 올라갔는지
+aws ssm get-parameter \
+  --name /lifesync/dev/ansible/public-key \
+  --region ap-northeast-2 \
+  --query Parameter.Value --output text
+```
+
+**재배포 순서**
+```
+14a → 14b → 14b 출력(AnsibleControlInstanceId) 확인 → 14c
+```
+
+---
+
+### SSM start-session 오류 모음
+
+| 에러 | 원인 | 해결 |
+|------|------|------|
+| `Could not connect to endpoint URL: ssm.ap-northease-2...` | 리전명 오타 (`northease` → `northeast`) | `aws configure set region ap-northeast-2` |
+| `403 Forbidden` | 로컬 IAM 자격증명에 `ssm:StartSession` 권한 없음 | IAM 정책에 ssm:StartSession 추가 또는 admin 프로파일 사용 |
+| `Session Manager plugin not found` | Session Manager Plugin 미설치 | [SessionManagerPluginSetup.exe](https://s3.amazonaws.com/session-manager-downloads/plugin/latest/windows/SessionManagerPluginSetup.exe) 설치 후 터미널 재시작 |

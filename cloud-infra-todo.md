@@ -22,17 +22,8 @@
 ### taskdef.json (platform)
 - `ACCOUNT_ID` 플레이스홀더 4곳 → 실제 AWS 계정 ID로 치환
 - `REDIS_HOST` secretsManager ARN → 실제 ARN 확인 후 수정
-- admin-platform용 taskdef.json 별도 생성 필요 (현재 없음)
 
-### Dockerfile (admin-platform)
-```dockerfile
-# 현재: Flask 개발 서버
-CMD ["python", "-m", "flask", "run", "--host=0.0.0.0", "--port=5001"]
-
-# 클라우드: gunicorn으로 변경
-CMD ["gunicorn", "-w", "2", "-b", "0.0.0.0:5001", "app:app"]
-```
-→ `requirements.txt`에 `gunicorn` 추가도 필요
+> **admin-platform은 ECS가 아니라 Windows EC2 + CodeDeploy로 배포 확정(2026-05-27, Task Scheduler 직접 구동) → taskdef.json·Dockerfile 해당 없음.**
 
 ### Dockerfile (platform)
 - 현재 Dockerfile도 개발 서버 사용 여부 확인 후 gunicorn 전환
@@ -96,20 +87,13 @@ CMD ["gunicorn", "-w", "2", "-b", "0.0.0.0:5001", "app:app"]
 
 ---
 
-### 2-6. admin-platform 배포 구성
-**현재 상태:** 코드만 있고 배포 대상 미정.  
-**결정 필요 사항:**
-- 배포 위치: 별도 ALB (내부) vs 기존 ALB 경로 기반 라우팅 vs EC2 직접
-- 접근 제한: SG에서 특정 IP만 허용 (운영자 사무실 IP)
-- taskdef.json 작성 (platform 것을 기반으로 포트/이름 변경)
-
-**작업 위치:** Terraform + admin-platform taskdef.json 신규 작성
+### 2-6. admin-platform 배포 구성 — ✅ 완료 (2026-05-27)
+EC2 직접 배포 + CodeDeploy 파이프라인으로 확정·구성 완료. 상세는 HANDOFF.md / project-progress.md 참고.
 
 ---
 
-### 2-7. CI/CD: admin-platform deploy job
-**현재 상태:** `ci.yml`에 test job만 있고 deploy job 없음 (`# deploy job은 배포 대상 확정 후 추가` 주석).  
-**해결 방법:** 배포 대상 확정되면 platform ci.yml의 `mirror-and-deploy` job을 참고해서 추가.
+### 2-7. CI/CD: admin-platform deploy job — ✅ 완료 (2026-05-27)
+admin CI/CD deploy job(CodeDeploy 파이프라인) 구성 완료. 상세는 HANDOFF.md 참고.
 
 ---
 

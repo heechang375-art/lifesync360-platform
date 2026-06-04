@@ -1,5 +1,9 @@
 # Lambda → On-Prem Private API 네트워크 연결 절차
 
+> ⚠️ **이 문서는 옛 설계(Service DB VPC + Data VPC 의 `customer_profile_sync`/동의고객선별 Lambda가 `192.168.56.13:8000` 호출) 기준입니다.**
+> 현재 구조는 **Platform VPC 직접 VPN** + `onprem_customer_query` Lambda(SG outbound `172.16.1.73:80`)로 변경됐고, `customer_profile_sync`는 폐기됐습니다.
+> 아래 "필요 작업 목록"·"진행 상태" 체크리스트는 폐기된 경로 기준이므로 **현재 진행 상황은 `project-progress.md` 를 참조하세요.**
+
 ## 목적
 
 Service DB VPC와 Data VPC의 Lambda 함수들이 온프레미스 Private API (`ls-api`, 192.168.56.13:8000)를 직접 호출할 수 있도록 네트워크 경로를 구성한다.

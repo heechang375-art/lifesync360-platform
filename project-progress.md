@@ -295,16 +295,15 @@ VirtualBox → 파일 → 호스트 네트워크 관리자 → 만들기
   DHCP 서버: 비활성화
 ```
 
-**VM 4대 생성**
+**VM 3대 생성**
 
 | VM 이름 | IP | 역할 | 메모리 | 디스크 |
 |---------|-----|------|--------|--------|
-| ls-vpngw | 192.168.56.10 | VPN Gateway (초기 구축 시 임시 Ansible Control Node 겸용) | 1GB | 20GB |
 | ls-db    | 192.168.56.11 | MySQL | 2GB | 50GB |
 | ls-token | 192.168.56.12 | Tokenization Service | 1GB | 20GB |
 | ls-api   | 192.168.56.13 | Private API + Cron | 1GB | 20GB |
 
-> **Note**: Ansible Control Node 역할은 Step 11에서 EC2로 이전. ls-vpngw는 VPN 터널 유지 전용으로 남음.
+> **Note**: Ansible Control Node는 EC2(Step 11~12). VPN 터널은 ls-api 브리지 어댑터가 직접 종단 → 별도 게이트웨이 VM 불필요.
 
 공통 설정: Ubuntu 22.04 / 어댑터1=NAT / 어댑터2=Host-Only(192.168.56.x 고정 IP)
 
@@ -348,7 +347,7 @@ sudo reboot
 
 ### Step 3 — SSH 키 생성 및 배포
 
-> 개발 PC(VirtualBox 호스트) 또는 ls-vpngw에서 실행. 3개 VM에 직접 접근 가능한 환경 기준.
+> 개발 PC(VirtualBox 호스트)에서 실행. 3개 VM에 직접 접근 가능한 환경 기준.
 > EC2 Control Node에서 배포할 경우 → Step 12의 `setup-ssh-keys.sh` 사용.
 
 ```bash
@@ -369,11 +368,11 @@ ssh -i ~/.ssh/lifesync360-onprem.pem ansible@192.168.56.13 "echo ok"
 
 ### Step 4 — Ansible 초기 설정 및 연결 확인 (초기 구축 전용)
 
-> **이 단계는 초기 온프레미스 구축 시 ls-vpngw를 임시 Control Node로 쓸 때만 필요.**
+> **이 단계는 초기 온프레미스 구축 시 개발 PC에서 임시로 Ansible을 돌릴 때만 필요.**
 > EC2 Control Node가 준비되면 Step 11~12로 대체됨.
 
 ```bash
-ssh ansible@192.168.56.10
+# 개발 PC(또는 3개 VM에 직접 접근 가능한 호스트)에서
 
 # Ansible 설치
 sudo apt update && sudo apt install -y ansible python3-pip
@@ -382,14 +381,13 @@ sudo apt update && sudo apt install -y ansible python3-pip
 git clone <repo_url> /opt/ansible/onprem-prod-repo
 cd /opt/ansible/onprem-prod-repo
 
-# SSH 키 복사 (개발 PC → ls-vpngw는 공유 폴더 또는 scp 이용)
+# SSH 키 준비
 mkdir -p ~/.ssh && chmod 700 ~/.ssh
 cp /mnt/downloads/lifesync360-onprem.pem ~/.ssh/
 chmod 600 ~/.ssh/lifesync360-onprem.pem
 
 # 연결 확인 — 3개 VM 모두 pong 이면 정상
 ansible all -m ping -i ansible/inventory/hosts.yml
-# ls-vpngw는 3개 VM 직접 접근 가능하므로 ProxyJump 불필요
 ```
 
 ---
@@ -399,7 +397,7 @@ ansible all -m ping -i ansible/inventory/hosts.yml
 > Vault 암호화 전이면 `--ask-vault-pass` 없이 실행. Step 9 이후엔 vault-pass 필요.
 
 ```bash
-# ls-vpngw 또는 개발 PC에서 (초기 구축 시)
+# 개발 PC에서 (초기 구축 시)
 cd /opt/ansible/onprem-prod-repo
 
 # Vault 암호화 전
@@ -949,7 +947,7 @@ VPN_CONNECTION_ID=vpn-xxxxxxxxx bash scripts/update-vpn-tunnel.sh
 ```
 
 출력에 `ESTABLISHED` 확인되면 VPN 연결 완료.
-연결 실패 시 → `local-test-troubleshooting.md` "IaC 재배포 후 VPN 터널 끊김" 항목 참고.
+연결 실패 시 → `troubleshooting.md` "IaC 재배포 후 VPN 터널 끊김" 항목 참고.
 
 ### 2단계 — EC2 Control Node 접속 (Control Node 재생성 시 InstanceId 갱신)
 
@@ -1583,58 +1581,7 @@ ONPREM_QUERY_LAMBDA=lifesync-onprem-customer-query
 
 ## 트러블슈팅
 
-### Ansible Control Node SSH 키 미생성 (2026-05-11)
-
-**증상**
-- `/home/ansible/.ssh/id_rsa` 파일이 생성되지 않음
-- 14c SSM Association이 공개키를 SSM Parameter Store에 올리지 못함
-
-**원인 1 — 14b UserData 실행 순서 버그**
-- 원래 순서: `git clone` → `SSH 키 생성`
-- `set -euo pipefail` 상태에서 git clone 실패 시 `exit 1` → SSH 키 생성 코드 미실행
-- 수정: SSH 키 생성 블록을 git clone **앞으로** 이동
-
-**원인 2 — sudo env_reset으로 인한 git PATH 문제**
-- UserData에서 `sudo -u ansible git clone ...` 실행 시 sudo가 PATH 초기화
-- git이 `/usr/bin/git`에 설치돼 있어도 초기화된 PATH에서 못 찾아 `env: 'git': No such file or directory` 발생
-- 수정: `sudo -u ansible git` → `sudo -u ansible /usr/bin/git` 전체 경로 지정
-
-**원인 3 — 14c에서 STS 엔드포인트 필요**
-- `aws sts get-caller-identity` 호출이 퍼블릭 STS 엔드포인트로 나가 VPC Endpoint 없이 실패 가능
-- 수정: 해당 사전 체크 제거 (ssm:PutParameter 자체가 IAM 없으면 어차피 실패)
-
-**확인 방법**
-```bash
-# SSM 세션 접속
-aws ssm start-session --target <AnsibleControlInstanceId> --region ap-northeast-2
-
-# UserData 로그 확인
-sudo tail -100 /var/log/ansible-bootstrap.log
-
-# 키 존재 여부
-ls -la /home/ansible/.ssh/
-
-# SSM에 공개키 올라갔는지
-aws ssm get-parameter \
-  --name /lifesync/dev/ansible/public-key \
-  --region ap-northeast-2 \
-  --query Parameter.Value --output text
-```
-
-**재배포 순서**
-```
-14a → 14b → 14b 출력(AnsibleControlInstanceId) 확인 → 14c
-```
-
----
-
-### SSM start-session 오류 모음 (2026-05-11)
-
-| 에러 | 원인 | 해결 |
-|------|------|------|
-| `Could not connect to endpoint URL: ssm.ap-northease-2...` | 리전명 오타 (`northease` → `northeast`) | `aws configure set region ap-northeast-2` |
-| `403 Forbidden` | 로컬 IAM 자격증명에 `ssm:StartSession` 권한 없음 | IAM 정책에 ssm:StartSession 추가 또는 admin 프로파일 사용 |
-| `Session Manager plugin not found` | Session Manager Plugin 미설치 | [SessionManagerPluginSetup.exe](https://s3.amazonaws.com/session-manager-downloads/plugin/latest/windows/SessionManagerPluginSetup.exe) 설치 후 터미널 재시작 |
+> 온프레미스 / Control Node 트러블슈팅은 [`troubleshooting.md`](troubleshooting.md) 로 통합했습니다. (Ansible Control Node SSH 키 미생성, SSM start-session 오류 등)
 
 ---
 
@@ -1894,7 +1841,7 @@ def require_jwt(f):
 
 - 캡처 산출물: `C:\Users\campus3S026\AppData\Local\Temp\ls_caps\` (11 PNG + admin_cookie.txt + HTML 임시)
 - 임시 venv: `C:\Users\campus3S026\AppData\Local\Temp\ls_venv` (재사용 가능)
-- CSS 정리 사고 + 복구 절차 + Edge headless 캡처 트릭 → `local-test-troubleshooting.md` 별도 정리
+- CSS 정리 사고 + 복구 절차 + Edge headless 캡처 트릭 → `troubleshooting.md` 별도 정리
 
 
 ## 2026-05-18 ② — admin 화이트 샘플 4 페이지 / DB 정합 검증 / PrivateAPI 풍부화 / Service-DB v3 슬림화 / docs 명세
@@ -1999,7 +1946,7 @@ def require_jwt(f):
 - admin `mockup_data.py` 3 곳 정정 — `MOCKUP_LOCAL_LAB` 의 ls-vpngw 행 제거, `MOCKUP_DASH_CLOUD3` 의 `lc-db · lc-tokenz · lc-api` → `ls-db · ls-token · ls-api`, `MOCKUP_NET_TOPOLOGY.onprem` lines 동일 정정
 - **`docs/private-api.md` 신규 (362줄)** — 9 섹션: 전체 21 라우트 / 신규 10 상세 (SQL/응답/용도) / 헬퍼 / 환경변수 / Lambda action ↔ endpoint 매핑 / pip 의존성 / 재배포 절차 + 검증 curl / 인증·보안 검토 / 변경이력
 - 코드 잔재 grep 0건 (`ls-vpngw|lc-api|lc-db|lc-tokenz`)
-- 과거 기록 문서(`local-test-troubleshooting.md`, `pii-encryption-guide.md` 등)는 history 보존을 위해 미정정
+- 과거 기록 문서(`troubleshooting.md`, `pii-encryption-guide.md` 등)는 history 보존을 위해 미정정
 
 ### 상태
 
