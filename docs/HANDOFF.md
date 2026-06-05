@@ -592,7 +592,7 @@ IP만 바뀌고 서브넷(/24) 그대로면 1, 2번만 처리하면 됨. 상세 
 | `Aws_iac/Aws_iac/templates/08-database.yaml` | DB IaC (CreateSqlOpsMysqlEc2=false 운영 중) |
 | `docs/iac-handoff-2026-05-24.md` | **IaC 담당자 전달용** (5 modified + 3 untracked + 권한 패치 5건 + 보안) |
 | `docs/admin-platform-app-guide.md` | 어드민 app.py 구조/API 문서 |
-| `docs/cicd-troubleshooting-and-iac-tasks.md` | 트러블슈팅 #1~#32 누적 |
+| `troubleshooting.md` | 트러블슈팅 통합 허브 (온프레미스+플랫폼+CI·CD #1~#32 누적) |
 | `project-progress.md` | 전체 진행 기록 (2026-05-25 세션까지 누적) |
 | `관리자_대시보드_설계서_V5_3.xlsx` | 최신 설계서 |
 | `seed_analytics_scratch.py` / `seed_ml_evaluation.py` / `seed_ddb_grades.py` / `seed_segment_today.py` | 시드 스크립트 (인프라 복구 후 실행 대기) |

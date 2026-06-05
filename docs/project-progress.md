@@ -1538,7 +1538,7 @@ ONPREM_QUERY_LAMBDA=lifesync-onprem-customer-query
   - ECS Execution Role SSM 권한 추가
   - 포트 불일치 수정: ALB 타겟 그룹이 80 고정이라 Dockerfile Gunicorn 바인딩 포트를 8000 → 80으로 수정
   - ECS 배포 설정 `minimumHealthyPercent=0, maximumPercent=200` 수정 (롤링 업데이트 가능하도록)
-  - 트러블슈팅 문서: `docs/cicd-troubleshooting-and-iac-tasks.md`
+  - 트러블슈팅 문서: `troubleshooting.md` (플랫폼 / CI·CD 섹션)
   - IaC 전달 항목: `docs/iac-tasks.md` (Execution Role, SSM, 태스크 정의, Log Group, 배포 설정)
 - update-vpn-tunnel.sh 버그 수정 3건
   - **Windows CRLF `\r` 버그 (IP 미반영 근본 원인)**: Windows AWS CLI가 CRLF로 출력 → `$()` substitution이 `\n`은 제거하지만 `\r`은 남김 → TUNNEL_IP에 `\r` 포함 → sed가 ipsec.conf에 `right=IP\r` 기록 → StrongSwan 파싱 실패. `tr -d '\r'` 추가 (TUNNEL_IP 2곳, PSK SM 조회 1곳)

@@ -307,6 +307,4 @@ IaC 정합 완료 시 `lifesync360-platform/deploy/buildspec.yml`의 post_build�
 ## 관련 문서
 
 - `docs/lambda-onprem-query-deploy.md` — Lambda + VPN 배포
-- `docs/ecs-taskdef-redeploy.md` — ECS register/force-deploy 수동 가이드 (시연용)
-- `docs/demo-removed-items-rollout.md` — 시연용 제거 항목 + 운영 전환
 - `lifesync360-platform/taskdef.json` / `admin-platform/taskdef.json` — 실제 정합 박힌 파일
