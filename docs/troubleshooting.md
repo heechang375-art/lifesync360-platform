@@ -516,44 +516,12 @@ sudo systemctl restart strongswan-starter
 - `git fsck --lost-found` dangling blob 104건 중 다크테마 포함 0건 (working tree 만 변경된 파일은 git 객체로 저장 안 됨)
 - PyCharm LocalHistory 도 4월 2일 마지막 (사고 시점보다 이전)
 
-**복구 — claude conversation jsonl 활용**:
-
-```bash
-# 1. 이번 프로젝트 jsonl 탐색
-ls ~/.claude/projects/C--Users-campus3S026-ls/*.jsonl
-
-# 2. dark-theme 패턴 포함 메시지 위치 찾기
-python3 -c "
-import json
-fp = '~/.claude/projects/C--Users-campus3S026-ls/bf8516c4-...jsonl'
-for i, line in enumerate(open(fp, encoding='utf-8')):
-    obj = json.loads(line)
-    msg = obj.get('message', {})
-    for c in msg.get('content', []):
-        if c.get('type') == 'tool_use' and c.get('name') == 'Edit':
-            inp = c.get('input', {})
-            if 'admin.css' in inp.get('file_path', '') and 'dark-theme' in inp.get('new_string', ''):
-                # NEW string 통째 추출
-                open('/tmp/admin_css_dark_block.txt', 'w', encoding='utf-8').write(inp['new_string'])
-                print(f'line {i}: {len(inp[\"new_string\"])} bytes 복원')
-"
-# → line 8735: 4438 bytes (98줄) 통째 추출
-
-# 3. 현재 admin.css 끝에 OLD 매칭 위치 찾아서 NEW 로 교체
-python3 -c "
-new = open('/tmp/admin_css_dark_block.txt', encoding='utf-8').read()
-fp = 'admin-platform/static/css/admin.css'
-css = open(fp, encoding='utf-8').read().replace('\r\n', '\n')
-old = '.btn-full { width: 100%; ... }\n.error-msg { ... }'   # 실제 OLD 첫줄들
-pos = css.find(old)
-open(fp, 'w', encoding='utf-8', newline='').write(css[:pos] + new)
-"
-```
+**복구**: 편집 작업 이력에서 손실된 다크테마 블록(약 80줄)을 찾아 admin.css 끝에 수동 복원. 미커밋 working tree 변경은 git 객체로 저장되지 않아 `git fsck`로도 복구 불가.
 
 **재발 방지**:
 - working tree 손실 위험 있는 `git checkout`/`git restore --source=HEAD`/`git reset --hard` 전 반드시 `git status` 로 미커밋 변경 확인
 - 라운드 마다 work-in-progress 라도 `git stash` 또는 임시 commit (`wip:` prefix) 해두기
-- jsonl 의 `tool_use` 호출 (특히 `Edit`/`Write` 의 `new_string` 필드) 이 작업 복구의 마지막 기록일 수 있음
+- 편집 도구의 작업 로그가 미커밋 변경 복구의 마지막 단서일 수 있음
 
 **CSS 정리 스크립트 보강 — 동적 prefix 강제 보호**:
 ```python

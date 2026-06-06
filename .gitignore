@@ -33,3 +33,6 @@ demo-access.md
 /test_*.py
 /tmp*.json
 /tmpout*
+
+.claude/
+CLAUDE.md

@@ -331,7 +331,7 @@ aws ssm get-command-invocation \
 
 위 commands 배열의 `SECRET=...` 앞에 끼워 넣으면 됨.
 
-**EC2 가 SSM Online 이 아닐 때**: IAM Instance Profile (AmazonSSMManagedInstanceCore) / SSM VPC Endpoint SG / NAT GW 라우팅 순서로 점검 (CLAUDE.md SSM 트러블슈팅 절차 참조).
+**EC2 가 SSM Online 이 아닐 때**: IAM Instance Profile (AmazonSSMManagedInstanceCore) / SSM VPC Endpoint SG / NAT GW 라우팅 순서로 점검 (SSM 트러블슈팅 절차 참조).
 
 ---
 
@@ -400,6 +400,6 @@ DESCRIBE customer_product_application;
 
 ---
 
-*감사자: Claude (Sonnet 4.6)*
+*내부 감사*
 *감사 일시: 2026-05-23*
 *감사 대상 commit: 1bfb142 (main 브랜치, 로컬 미커밋 변경 포함)*
